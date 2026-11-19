@@ -20,6 +20,10 @@ lihong-skills/
 ├── .github/
 │   └── workflows/
 │       └── check.yml                       # GitHub Actions: automates SKILL.md validation
+├── .gemini-plugin/
+│   └── plugin.json                         # Google Antigravity plugin manifest
+├── .antigravity-plugin/
+│   └── plugin.json                         # Antigravity 2.0 / IDE plugin manifest
 ├── .claude-plugin/
 │   ├── plugin.json                         # Claude Code / Codex plugin specification
 │   └── marketplace.json                    # Marketplace catalog metadata
@@ -31,12 +35,14 @@ lihong-skills/
 │   └── install.sh                          # POSIX (macOS/Linux/WSL): symlinks skills
 ├── skills/
 │   └── engineering/
+│       ├── ask-lihong/                     # Master router across methodologies & toolkits
 │       ├── git-commit-helper/              # Conventional commit generator
 │       ├── sync-upstream/                  # Upstream tracking, diffing, & sync manager
 │       ├── autonomous-engineering/         # Parameterized multi-agent orchestrator with placeholders
 │       └── init-super-agent/               # Project bootstrap scaffolder
 ├── .gitignore                              # Ignores .idea/, .vscode/, node_modules/, etc.
-├── AGENTS.md                               # Core instruction manual for AI agents
+├── AGENTS.md                               # Core instruction manual for all AI agents
+├── GEMINI.md                               # Quick reference for Google Antigravity
 ├── CLAUDE.md                               # Quick reference for Claude Code
 ├── package.json                            # Project metadata & npm validation scripts
 └── README.md                               # Project overview & index
