@@ -96,8 +96,11 @@ $CommitHelperSkillDir = Join-Path $SkillsDir "git-commit-helper"
 $SourceCommitHelperDir = Join-Path $RepoRoot "skills\engineering\git-commit-helper"
 $DocsDir = Join-Path $TargetDir "docs"
 $SuperAgentDir = Join-Path $TargetDir ".super-agent"
+$AgentsWorkspaceSkills = Join-Path $TargetDir ".agents\skills"
+$AgentsWorkspaceAutonomousDir = Join-Path $AgentsWorkspaceSkills "autonomous-engineering"
+$AgentsWorkspaceCommitDir = Join-Path $AgentsWorkspaceSkills "git-commit-helper"
 
-@($AgentsDir, $HooksDir, $AutonomousSkillDir, $CommitHelperSkillDir, $DocsDir, $SuperAgentDir) | ForEach-Object {
+@($AgentsDir, $HooksDir, $AutonomousSkillDir, $CommitHelperSkillDir, $DocsDir, $SuperAgentDir, $AgentsWorkspaceAutonomousDir, $AgentsWorkspaceCommitDir) | ForEach-Object {
     if (-not (Test-Path $_)) {
         New-Item -ItemType Directory -Path $_ -Force | Out-Null
     }
@@ -150,11 +153,13 @@ Get-ChildItem -Path (Join-Path $SourceSkillDir "agents") -Filter "*.md" | ForEac
 Copy-Item (Join-Path $SourceSkillDir "hooks\super-agent-stop-guard.py") (Join-Path $HooksDir "super-agent-stop-guard.py") -Force
 Copy-Item (Join-Path $SourceSkillDir "settings.json") (Join-Path $ClaudeDir "settings.json") -Force
 Copy-Item (Join-Path $SourceSkillDir "SKILL.md") (Join-Path $AutonomousSkillDir "SKILL.md") -Force
+Copy-Item (Join-Path $SourceSkillDir "SKILL.md") (Join-Path $AgentsWorkspaceAutonomousDir "SKILL.md") -Force
 if (Test-Path (Join-Path $SourceCommitHelperDir "SKILL.md")) {
     Copy-Item (Join-Path $SourceCommitHelperDir "SKILL.md") (Join-Path $CommitHelperSkillDir "SKILL.md") -Force
+    Copy-Item (Join-Path $SourceCommitHelperDir "SKILL.md") (Join-Path $AgentsWorkspaceCommitDir "SKILL.md") -Force
 }
 Write-Host "  + Deployed Stop guard hook & Claude settings" -ForegroundColor Green
-Write-Host "  + Deployed paired skills: autonomous-engineering & git-commit-helper" -ForegroundColor Green
+Write-Host "  + Deployed paired skills: autonomous-engineering & git-commit-helper (to .claude and .agents)" -ForegroundColor Green
 
 # Deploy State Machine
 Copy-Item (Join-Path $SourceSkillDir "templates\state.json") (Join-Path $SuperAgentDir "state.json") -Force
@@ -173,14 +178,27 @@ Get-ChildItem -Path $TemplatesDocsDir -Filter "*.template.md" | ForEach-Object {
     }
 }
 
-# Deploy CLAUDE.md
+# Deploy Rule Files: CLAUDE.md, GEMINI.md, and AGENTS.md
 $TargetClaudeMd = Join-Path $TargetDir "CLAUDE.md"
+$TargetGeminiMd = Join-Path $TargetDir "GEMINI.md"
+$TargetAgentsMd = Join-Path $TargetDir "AGENTS.md"
 $SourceClaudeTemplate = Join-Path $SourceSkillDir "CLAUDE.template.md"
+
 if (-not (Test-Path $TargetClaudeMd)) {
     Render-Template $SourceClaudeTemplate $TargetClaudeMd
-    Write-Host "  + Created project CLAUDE.md" -ForegroundColor Green
+    Write-Host "  + Created project CLAUDE.md (Claude Code)" -ForegroundColor Green
 } else {
     Write-Host "  ~ CLAUDE.md already exists in target project." -ForegroundColor Gray
+}
+
+if (-not (Test-Path $TargetGeminiMd)) {
+    Render-Template $SourceClaudeTemplate $TargetGeminiMd
+    Write-Host "  + Created project GEMINI.md (Google Antigravity)" -ForegroundColor Green
+}
+
+if (-not (Test-Path $TargetAgentsMd)) {
+    Render-Template $SourceClaudeTemplate $TargetAgentsMd
+    Write-Host "  + Created project AGENTS.md (Codex & Agent Standards)" -ForegroundColor Green
 }
 
 # Update .gitignore

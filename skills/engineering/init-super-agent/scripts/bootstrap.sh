@@ -50,6 +50,8 @@ mkdir -p "$TARGET_DIR/.claude/agents" \
          "$TARGET_DIR/.claude/hooks" \
          "$TARGET_DIR/.claude/skills/autonomous-engineering" \
          "$TARGET_DIR/.claude/skills/git-commit-helper" \
+         "$TARGET_DIR/.agents/skills/autonomous-engineering" \
+         "$TARGET_DIR/.agents/skills/git-commit-helper" \
          "$TARGET_DIR/docs" \
          "$TARGET_DIR/.super-agent"
 
@@ -101,8 +103,10 @@ done
 cp "$SOURCE_SKILL_DIR/hooks/super-agent-stop-guard.py" "$TARGET_DIR/.claude/hooks/"
 cp "$SOURCE_SKILL_DIR/settings.json" "$TARGET_DIR/.claude/"
 cp "$SOURCE_SKILL_DIR/SKILL.md" "$TARGET_DIR/.claude/skills/autonomous-engineering/"
+cp "$SOURCE_SKILL_DIR/SKILL.md" "$TARGET_DIR/.agents/skills/autonomous-engineering/"
 if [ -f "$SKILLS_ROOT/git-commit-helper/SKILL.md" ]; then
   cp "$SKILLS_ROOT/git-commit-helper/SKILL.md" "$TARGET_DIR/.claude/skills/git-commit-helper/"
+  cp "$SKILLS_ROOT/git-commit-helper/SKILL.md" "$TARGET_DIR/.agents/skills/git-commit-helper/"
 fi
 cp "$SOURCE_SKILL_DIR/templates/state.json" "$TARGET_DIR/.super-agent/state.json"
 
@@ -116,10 +120,20 @@ for f in "$SOURCE_SKILL_DIR/templates/docs"/*.template.md; do
   fi
 done
 
-# Deploy CLAUDE.md if not present
+# Deploy Rule Files: CLAUDE.md, GEMINI.md, and AGENTS.md
 if [ ! -f "$TARGET_DIR/CLAUDE.md" ]; then
   render_file "$SOURCE_SKILL_DIR/CLAUDE.template.md" "$TARGET_DIR/CLAUDE.md"
-  echo "  + Generated CLAUDE.md"
+  echo "  + Generated CLAUDE.md (Claude Code)"
+fi
+
+if [ ! -f "$TARGET_DIR/GEMINI.md" ]; then
+  render_file "$SOURCE_SKILL_DIR/CLAUDE.template.md" "$TARGET_DIR/GEMINI.md"
+  echo "  + Generated GEMINI.md (Google Antigravity)"
+fi
+
+if [ ! -f "$TARGET_DIR/AGENTS.md" ]; then
+  render_file "$SOURCE_SKILL_DIR/CLAUDE.template.md" "$TARGET_DIR/AGENTS.md"
+  echo "  + Generated AGENTS.md (Codex & Agent Standards)"
 fi
 
 # Ensure .gitignore has .super-agent/
