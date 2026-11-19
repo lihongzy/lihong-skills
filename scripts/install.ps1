@@ -98,4 +98,38 @@ foreach ($dest in $Destinations) {
     Write-Host ""
 }
 
-Write-Host "Done! Processed $TotalSkills skill(s)." -ForegroundColor Cyan
+# Register in Google Antigravity global declared config (~/.gemini/config/skills.json)
+$GeminiConfigDir = Join-Path $HOME ".gemini\config"
+if (Test-Path $GeminiConfigDir) {
+    $SkillsJsonPath = Join-Path $GeminiConfigDir "skills.json"
+    $EngineeringPath = (Join-Path $SkillsRoot "engineering").Replace("\", "/")
+    
+    $skillsConfig = @{ entries = @() }
+    if (Test-Path $SkillsJsonPath) {
+        try {
+            $existing = Get-Content $SkillsJsonPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ($existing.entries) {
+                $skillsConfig.entries = @($existing.entries)
+            }
+        } catch {}
+    }
+    
+    $alreadyRegistered = $false
+    foreach ($entry in $skillsConfig.entries) {
+        if ($entry.path -eq $EngineeringPath) {
+            $alreadyRegistered = $true
+            break
+        }
+    }
+    
+    if (-not $alreadyRegistered) {
+        $skillsConfig.entries += @{ path = $EngineeringPath }
+        if (-not $DryRun) {
+            $skillsConfig | ConvertTo-Json -Depth 5 | Set-Content $SkillsJsonPath -Encoding UTF8
+        }
+        Write-Host "Google Antigravity Config:" -ForegroundColor DarkCyan
+        Write-Host "  + Registered skills path in: $SkillsJsonPath" -ForegroundColor Green
+    }
+}
+
+Write-Host "`nDone! Processed $TotalSkills skill(s)." -ForegroundColor Cyan
