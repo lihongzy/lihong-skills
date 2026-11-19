@@ -1,0 +1,280 @@
+import { nextBatch } from '../ingress/batch.ts'
+import { refsForDecision } from '../memory/graph.ts'
+import { UserError } from '../shared/errors.ts'
+import type { AssessmentOutcome } from '../shared/ports.ts'
+import { threadKey, type Decision, type DecisionKind, type Disposition, type Strength, type Thread, type Ticket, type Trigger } from '../shared/types.ts'
+import type { Host } from './host.ts'
+import { arbitrateSubscribers } from './intake.ts'
+import { DEFAULT_POLICY, gateTriggers, type Policy } from './policy.ts'
+import type { Tickets } from './tickets.ts'
+
+/**
+ * Router terminal assessments. An `accept` may precede one of these (the Gate
+ * accepted, then the Router vetoed), but only one terminal kind is ever
+ * recorded per trigger. Repeated owner calls are idempotent.
+ */
+const TERMINAL_DECISION_KINDS: ReadonlySet<DecisionKind> = new Set(['stop', 'ignore', 'unavailable'])
+
+export class Evals {
+  constructor(
+    private readonly host: Host,
+    private readonly tickets: Tickets,
+    private readonly policy: Policy = DEFAULT_POLICY,
+  ) {}
+
+  /**
+   * Deterministic Eval. It accepts only what Policy can decide without an LLM.
+   * A `defer` keeps the Triggers queued and asks the Main Agent to assess them.
+   */
+  evaluateDue(): Decision[] {
+    const decisions: Decision[] = []
+    const due = this.host.repo.listDocs<Thread>('thread').filter(thread => thread.pending.length > 0)
+    for (const thread of due) {
+      const ids = nextBatch(thread.pending)
+      const triggers: Trigger[] = []
+      const filtered: string[] = []
+      for (const id of ids) {
+        const trigger = this.host.repo.getDoc<Trigger>('trigger', id)
+        if (!trigger) continue
+        // Defence in depth: an ingress-denied trigger must never be resurrected
+        // from a stale queue. Clear it so Router assessment cannot accept it either.
+        if (this.host.repo.getDoc<Disposition>('disposition', id)?.filtered !== undefined) {
+          filtered.push(id)
+          continue
+        }
+        triggers.push(trigger)
+      }
+      if (filtered.length) {
+        thread.pending = thread.pending.filter(id => !filtered.includes(id))
+        this.host.log(`[engine] Evals.skip-filtered thread=${thread.key} triggerIds=${filtered.join(',')}`)
+      }
+      if (!triggers.length) {
+        thread.pending = thread.pending.filter(id => !ids.includes(id))
+        thread.deferred = false
+        this.host.repo.putDoc('thread', thread.key, thread)
+        continue
+      }
+      const admittedIds = triggers.map(trigger => trigger.id)
+      const primary = triggers.find(trigger => trigger.addressed) ?? triggers[0]!
+      const strength = strengthOf(primary)
+      const live = arbitrateSubscribers(
+        this.host.repo.listDocs<Ticket>('ticket').filter(ticket =>
+          thread.subscriptions.includes(ticket.id) && ticket.ended == null),
+      )
+      const outcome = gateTriggers(triggers, live, this.policy)
+      if (outcome.kind === 'defer') {
+        this.host.log(`[engine] Evals.defer thread=${thread.key} reason=${outcome.reason}`)
+        thread.deferred = true
+        this.host.repo.addEvent('eval.deferred', { threadKey: thread.key, triggerIds: admittedIds, reason: outcome.reason })
+        this.host.repo.putDoc('thread', thread.key, thread)
+        this.host.onAssessmentNeeded?.(thread.key)
+        continue
+      }
+      thread.deferred = false
+      thread.pending = thread.pending.filter(id => !ids.includes(id))
+      const evalId = this.host.repo.nextId('eval')
+      this.host.log(`[engine] Evals.batch thread=${thread.key} size=${admittedIds.length} triggerIds=${admittedIds.join(',')}`)
+      this.host.repo.addEvent('eval.started', { evalId, threadKey: thread.key, triggerIds: admittedIds, strength })
+      if (outcome.kind === 'accept') {
+        const decision = this.tickets.create({
+          thread,
+          triggers,
+          primary,
+          strength: outcome.strength ?? strength,
+          evalId,
+          reason: outcome.reason,
+          policyVersion: this.policy.version,
+          rules: outcome.rules,
+        })
+        this.host.repo.putDoc('thread', thread.key, thread)
+        decisions.push(decision)
+        continue
+      }
+      if (outcome.kind === 'stop' && outcome.ticketId) {
+        this.tickets.stop(outcome.ticketId, outcome.reason)
+      }
+      decisions.push(this.record({
+        thread,
+        triggers,
+        strength,
+        evalId,
+        kind: outcome.kind,
+        reason: outcome.reason,
+        ticketId: outcome.ticketId,
+      }))
+      this.host.repo.putDoc('thread', thread.key, thread)
+    }
+    return decisions
+  }
+
+  /** Commit the assessed snapshot only if every trigger is still queued together. */
+  commitAssessed(key: string, ids: string[], outcome: AssessmentOutcome): Decision | undefined {
+    const thread = this.host.repo.getDoc<Thread>('thread', key)
+    if (!thread || ids.length === 0 || ids.some(id => !thread.pending.includes(id))) return undefined
+    const triggers = ids.map(id => this.host.repo.getDoc<Trigger>('trigger', id))
+    if (triggers.some(trigger => !trigger)) return undefined
+    // Defence in depth: assessment must never commit a trigger ingress denied.
+    if (ids.some(id => this.host.repo.getDoc<Disposition>('disposition', id)?.filtered !== undefined)) {
+      return undefined
+    }
+    const batch = triggers as Trigger[]
+    thread.pending = thread.pending.filter(id => !ids.includes(id))
+    thread.deferred = false
+    const primary = batch.find(trigger => trigger.addressed) ?? batch[0]!
+    const strength = strengthOf(primary)
+    const evalId = this.host.repo.nextId('eval')
+    this.host.log(`[engine] Evals.batch thread=${key} size=${ids.length} triggerIds=${ids.join(',')}`)
+    this.host.repo.addEvent('eval.started', { evalId, threadKey: key, triggerIds: ids, strength })
+    if (outcome.kind === 'accept') {
+      const decision = this.tickets.create({
+        thread,
+        triggers: batch,
+        primary,
+        strength: outcome.strength ?? strength,
+        evalId,
+        reason: outcome.reason,
+        title: outcome.title,
+        scope: outcome.scope,
+        policyVersion: outcome.policyVersion ?? this.policy.version,
+        rules: outcome.rules,
+        speculative: outcome.speculative,
+      })
+      this.host.repo.putDoc('thread', key, thread)
+      return decision
+    }
+    if (outcome.kind === 'stop') this.tickets.stop(outcome.ticketId, outcome.reason)
+    const decision = this.record({ thread, triggers: batch, strength, evalId, kind: outcome.kind, reason: outcome.reason,
+      ticketId: outcome.kind === 'stop' ? outcome.ticketId : undefined })
+    this.host.repo.putDoc('thread', key, thread)
+    return decision
+  }
+
+  private record(input: {
+    thread: Thread
+    triggers: Trigger[]
+    strength: Strength
+    evalId: string
+    kind: DecisionKind
+    reason: string
+    ticketId?: string
+  }): Decision {
+    const now = this.host.now()
+    const decision: Decision = {
+      id: this.host.repo.nextId('dec'),
+      evalId: input.evalId,
+      threadKey: input.thread.key,
+      triggerIds: input.triggers.map(trigger => trigger.id),
+      kind: input.kind,
+      ticketId: input.ticketId,
+      at: now,
+      reason: input.reason,
+      strength: input.strength,
+    }
+    decision.refs = refsForDecision(decision)
+    this.host.repo.putDoc('decision', decision.id, decision)
+    this.host.repo.addEvent('decision.recorded', { decisionId: decision.id, kind: input.kind })
+    this.notifyDecision(decision)
+    const ticket = input.ticketId ? ` ticketId=${input.ticketId}` : ''
+    this.host.log(`[engine] Evals.${input.kind} thread=${input.thread.key}${ticket} reason=${input.reason}`)
+    return decision
+  }
+
+  /** Router-only assessment. Accept opens a ticket; every other kind stays silent. */
+  decide(triggerId: string, outcome: AssessmentOutcome): Decision {
+    const trigger = this.host.repo.getDoc<Trigger>('trigger', triggerId)
+    if (!trigger) throw new UserError(`unknown trigger ${triggerId}`)
+    const disposition = this.host.repo.getDoc<Disposition>('disposition', triggerId)
+    if (disposition?.filtered !== undefined) {
+      throw new UserError(
+        `trigger ${triggerId} was filtered (${disposition.filtered || 'filtered'}) and cannot be decided without re-admission`,
+      )
+    }
+    if (!trigger.threads.length) throw new UserError('A trigger must belong to at least one thread')
+    const key = threadKey(trigger.threads[0]!)
+    const thread = this.host.repo.getDoc<Thread>('thread', key)
+    if (!thread) throw new UserError(`unknown thread ${key}`)
+    const prior = this.host.repo.listDocs<Decision>('decision')
+      .filter(decision => decision.triggerIds.includes(triggerId))
+    const terminal = prior.find(decision => TERMINAL_DECISION_KINDS.has(decision.kind))
+    if (terminal) {
+      this.host.log(
+        `[engine] Evals.decide skipped triggerId=${triggerId} kind=${outcome.kind} `
+        + `existing=${terminal.kind} decisionId=${terminal.id}`,
+      )
+      return terminal
+    }
+    if (outcome.kind === 'accept') {
+      const accepted = prior.find(decision => decision.kind === 'accept')
+      if (accepted) {
+        this.host.log(
+          `[engine] Evals.decide skipped triggerId=${triggerId} kind=accept `
+          + `existing=accept decisionId=${accepted.id}`,
+        )
+        return accepted
+      }
+    }
+    thread.pending = thread.pending.filter(id => id !== triggerId)
+    const strength = strengthOf(trigger)
+    const evalId = this.host.repo.nextId('eval')
+    this.host.log(`[engine] Evals.decide triggerId=${triggerId} kind=${outcome.kind}`)
+    this.host.repo.addEvent('eval.started', { evalId, threadKey: key, triggerIds: [triggerId], strength })
+    if (outcome.kind === 'accept') {
+      return this.tickets.create({
+        thread,
+        triggers: [trigger],
+        primary: trigger,
+        strength: outcome.strength ?? strength,
+        evalId,
+        reason: outcome.reason,
+        title: outcome.title,
+        scope: outcome.scope,
+        policyVersion: outcome.policyVersion ?? this.policy.version,
+        rules: outcome.rules,
+        speculative: outcome.speculative,
+      })
+    }
+    this.host.repo.putDoc('thread', thread.key, thread)
+    if (outcome.kind === 'stop') this.stopTicket(outcome.ticketId, outcome.reason)
+    const now = this.host.now()
+    const decision: Decision = {
+      id: this.host.repo.nextId('dec'),
+      evalId,
+      threadKey: thread.key,
+      triggerIds: [triggerId],
+      kind: outcome.kind,
+      ticketId: outcome.kind === 'stop' ? outcome.ticketId : undefined,
+      at: now,
+      reason: outcome.reason,
+      strength,
+    }
+    decision.refs = refsForDecision(decision)
+    this.host.repo.putDoc('decision', decision.id, decision)
+    this.host.repo.addEvent('decision.recorded', { decisionId: decision.id, kind: outcome.kind })
+    this.notifyDecision(decision)
+    return decision
+  }
+
+  /** A Decision is Router global memory; observers never abort the transaction. */
+  private notifyDecision(decision: Decision): void {
+    const hook = this.host.onDecision
+    if (!hook) return
+    try {
+      hook(decision)
+    } catch (error) {
+      this.host.log(`[hook] hook=decision decisionId=${decision.id} error=${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+
+  /** Delegate to the shared stop path so scratch cleanup runs for every entrypoint. */
+  private stopTicket(ticketId: string, reason: string, by: 'human' | 'router' = 'router'): void {
+    this.tickets.stop(ticketId, reason, by)
+    this.host.log(`[engine] Evals.stop ticketId=${ticketId}`)
+  }
+}
+
+function strengthOf(trigger: Trigger): Strength {
+  const value = trigger.meta.strength
+  if (value === 'explicit' || value === 'inferred' || value === 'maybe') return value
+  if (trigger.addressed) return 'explicit'
+  return 'inferred'
+}

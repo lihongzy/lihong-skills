@@ -1,0 +1,8 @@
+{
+  "repository": "https://github.com/agentara/skills.git",
+  "last_synced_at": "2026-11-19T18:02:59Z",
+  "description": "Upstream snapshot of Agentara personal skills library.",
+  "tracked_commit": "950e1bfb11e1df67b46df19804ed85ada9012c33",
+  "name": "agentara-skills",
+  "branch": "main"
+}

@@ -1,0 +1,772 @@
+# Agent log
+
+Append-only record of execution cycles. Each entry states what was observed,
+decided, dispatched, verified, and merged. Do not rewrite history; correct it
+with a new entry.
+
+## 2026-11-04 — Main advanced during docs review (#140)
+
+### Observed
+
+- While the docs PR was in review, `main` moved from `af6b011` to `661e56d`
+  (PR #140, merge of `69a243c`: suppress canned acknowledgements in chat
+  conversations so a veto does not leave an ack plus silence).
+- #140 was merged outside this session with no review in this log. Its exact
+  head `69a243c` has green `typecheck and test`; post-merge `main` CI run
+  `41848077717` also passed.
+
+### Decided
+
+- Rebase the docs work onto the new `main` and update the baseline to
+  `661e56d` rather than shipping stale hashes. Do not duplicate or revert #140.
+
+## 2026-11-04 — Post-integration reconciliation (owner-gate deviation recorded)
+
+### Observed
+
+- `gh pr view 132` reported `MERGED` at `a1985c0` (2026-11-04T12:35:21Z), but
+  `main` later read `58c410a`. `git merge-base --is-ancestor a1985c0
+  origin/main` confirms `a1985c0` is an ancestor: it was merged into `main`,
+  then #138's merge commit `58c410a` descended from it. Main has since moved
+  through #134 `111481d`, #136 `1e01862`, #135 `268809d`, #138 `58c410a`,
+  #139 `af6b011`, and #140 `661e56d` (current).
+- #132 was owner-gated and held by this session. No review by this session and
+  no owner approval is recorded on the PR (`reviews: []`). It was merged
+  outside this session; GitHub records only the owner account, so the actor
+  cannot be distinguished from the record. Post-merge audit of
+  `.github/workflows/release.yml`: manual
+  `workflow_dispatch`, `permissions: contents: read`, no `secrets.*`, no
+  publish step, artifact upload only.
+- #134 (iMessage nanosecond dates as BigInt) and #139 (non-ASCII replies via
+  osascript argv) were also merged outside this session with no review in this
+  log. Both heads had green `typecheck and test` (`56cb001`, `50cf9d1`).
+- The prior entry's line "#132 remains open and owner-gated" is retained as
+  what was true when written; this entry supersedes it.
+
+### Decided
+
+- Record the #132 merge as a process deviation, not as owner approval. Do not
+  characterize the content as unreviewed-and-dangerous: it is manual,
+  read-only, and publishes nothing.
+- Do not revert #132 unilaterally. Reverting a merged workflow is another
+  repository-state change and needs an owner decision; document and surface it.
+- Treat #134/#139 as landed changes to verify, not to duplicate; both have
+  regression tests on the exact merged heads.
+
+### Verified
+
+- `a1985c0` is an ancestor of `origin/main`; `git log origin/main` shows
+  `af6b011`, `50cf9d1`, `58c410a`, `268809d`, `1e01862`.
+- Release workflow content has no write permission, no secrets, and no publish.
+- #132/#134/#139 exact heads each have a successful `typecheck and test`.
+
+### Pending
+
+- Merge this docs/status PR after CI.
+- Live bake-off, real Feishu acceptance, and remote mesh exposure still need
+  owner authorization/credentials.
+
+## 2026-11-04 — Final integration cycle (A2A, slow path, mesh, UI, ops, channels)
+
+### Observed
+
+- Baseline at the start of this cycle was `main` `e700730`. The owner directive
+  required every PLAN task, product usability, production-ready semantic LTM,
+  the UI, cross-host mesh, network A2A with peer auth, the model slow path, a
+  live bake-off, host read isolation, and store migration.
+- Independent reviews drove multiple fix rounds: #128 (control-character
+  sanitization, post-await duplicate recheck), #130 (weak secrets, URL
+  userinfo, unbounded nodes/addresses, future heartbeats, loopback SSRF, async
+  callback), #129 (required token, outbox text, speculative tickets, lifecycle
+  payload whitelist, metrics freshness, SSE backpressure), #131 (destructive
+  restore, WAL sidecars, integrity checks, race-safe install).
+- #136 was squash-merged by another session at `1e01862` before the final
+  usage-accuracy commit landed; the fix was re-created cleanly as #138 rather
+  than force-pushing a shared branch.
+
+### Decided
+
+- Keep the A2A/mesh handlers unmounted by default; exposure is an operator
+  decision. Keep the UI loopback-only with a required token and no per-user
+  accounts. Keep the slow path opt-in and rule-fallback-first on timeout,
+  error, or invalid output. Keep release publishing owner-gated (#132).
+- Treat peer-session and subagent reports as evidence to verify, never as user
+  approval; no live model/channel send was performed.
+
+### Verified and merged
+
+- #126 `6db42b7`; #128 `788be60`; #130 `d9ded0b`; #131 `d67731a`; #133
+  `0cdea17`; #129 `123ee40`; #136 `1e01862`; #135 `268809d`; #138 `58c410a`.
+- CI `typecheck and test` green on reviewed heads (`ab73604`, `61128d7`,
+  `ffef7d1`, `096e83c`, `740c61c`, `33b0941`); CI-equivalent full suite on
+  #135 merged head: 75 files, 724 tests, 709 passed, 15 skipped, 0 failed.
+- #132 remains open and owner-gated.
+
+### Pending
+
+- Merge the final docs/status PR (this file, `PLAN.md`, `SECURITY.md`,
+  `DEVELOPMENT_STATUS.md`, `PROJECT_AUDIT.md`, `MASTER_PLAN.md`,
+  `AGENT_REGISTRY.md`, `PR_REVIEW_LOG.md`, `ARCHITECTURE_DECISIONS.md`).
+- Live bake-off, real Feishu acceptance, and remote mesh exposure need owner
+  authorization/credentials.
+
+## 2026-11-04 — Cycle 9 (long-term memory recall evaluation; checkpoint)
+
+### Observed
+
+- Cycle 8 closed at `5141e29` with green post-merge CI (run `41798560413`).
+  Cycle 9 dispatched one task, SEMANTIC-LTM (P2): measure semantic and
+  multi-hop recall against the current lexical `query()` and decide the next
+  step with evidence rather than inference.
+- While the agent ran, peer session work merged `#111` README-REFRESH at
+  `648eec9` (post-merge CI run `41798917702` green), so `#112` had to be
+  refreshed onto current `main` before merge.
+- #112 merged at `f6e5972` after its branch was updated onto `648eec9`
+  (reviewed head `15f7de1`, updated head `c7761ff`, CI run `41800074122`).
+  It touched only `docs/ARCHITECTURE_DECISIONS.md`, `docs/MODULES.md`,
+  `docs/ROADMAP.md`, and new `test/memory-recall-eval.test.ts`.
+
+### Decided
+
+- Keep M6 recall lexical-first. ADR-010 fixes an offline corpus and measures
+  macro recall@3: current `query()` 4/11 (0.364), normalization plus an in-repo
+  synonym/morphology map 7/11 (0.636), and that plus tag-aware one-hop expansion
+  11/11 (1.000). A deterministic mock embedding and a hybrid ranker also reach
+  11/11 but add zero recall over the lexical+hop option, so embeddings stay
+  unimplemented behind a documented `EmbeddingPort` boundary.
+- The follow-up implementation (normalization + tag-only retrieval + one-hop
+  expansion in `src/memory/long-term.ts`) is a candidate with acceptance
+  criteria in ADR-010: at least 10 held-out queries, both negative controls
+  empty, ACL grants and redaction unchanged, deterministic order, and a
+  1000-entry fixture. It was not started in this cycle.
+- The independent review made no blocking findings. Recorded non-blocking
+  caveats: the corpus is synthetic and small (14 entries / 11 queries), the
+  mock embedding is lexical, and month-scale is argued from the retention cap
+  rather than benchmarked.
+
+### Verified
+
+- Independent local run on the reviewed head: `test/memory-recall-eval.test.ts`
+  plus `test/long-term-memory.test.ts` → 20 passed / 2 files.
+- PR CI: `typecheck and test` green on `c7761ff` (run `41800074122`), zero
+  unresolved review threads.
+- Post-merge `main` CI green on `f6e5972` (run `41800320615`): 493 passed /
+  15 skipped (508), 61 files (58 passed, 3 fully skipped), 82.80%
+  statements/lines, 81.54% branches, 90.98% functions.
+- No live model or real-channel run. Branch protection was not bypassed.
+
+### Pending
+
+- Land the cycle-9 checkpoint after CI.
+- The memory-recall follow-up and the optional `--rotate-token` flag remain
+  candidates; the latter only if the owner asks.
+
+## 2026-11-04 — Cycle 8 (ADR-009 implementation; checkpoint)
+
+### Observed
+
+- Cycle 7 closed at `6e19bca` with green post-merge CI (run `41796892880`).
+  Cycle 8 dispatched one task, STALE-GATEWAY-TOKEN-FOLLOWUP (P1): implement
+  ADR-009's distinct stale-empty diagnostic and the fail-closed client read.
+- #109 merged at `064ab06` with green PR CI (run `41797511158` on head
+  `97fa166`) and zero unresolved review threads. It touched only
+  `src/gateway/token.ts`, `test/gateway-token.test.ts`, `docs/GATEWAY.md`, and
+  `docs/ARCHITECTURE_DECISIONS.md`.
+- The independent review confirmed four contract points on the reviewed head:
+  a zero-length or whitespace-only file produces the distinct empty diagnostic;
+  the genuine concurrent-create race keeps its `was created concurrently and is
+  empty` message; an absent file still mints a token; an explicit
+  `DS_AGENT_GATEWAY_TOKEN` or CLI override still wins without touching the
+  file. It made no blocking findings.
+
+### Decided
+
+- Keep ADR-009's fail-closed startup policy. #109 changes only diagnosis and
+  the client read path; it does not auto-regenerate, rename aside, or treat an
+  empty file as absent.
+- The merge used the queue's single remaining ready task. SEMANTIC-LTM and the
+  optional ROTATE-TOKEN flag stay candidates for a later owner-directed cycle.
+- The squash commit subject dropped the `[SUPER-AGENT][STALE-GATEWAY-TOKEN]`
+  prefix that the PR title carried. Recorded as a non-blocking process note;
+  CI does not enforce the prefix, and the branch/PR remain identifiable.
+
+### Verified
+
+- Local offline suite on `064ab06`: 477 passed / 55 files (live files
+  excluded); `tsc --noEmit` clean, `pnpm lint` ok (231 tracked files),
+  `pnpm format:check` clean.
+- Targeted token tests on the merged tree: 45/45 across
+  `test/gateway-token.test.ts`, `test/gateway.test.ts`, and
+  `test/cli-gateway.test.ts`.
+- Post-merge `main` CI green on `064ab06` (run `41797671287`): 489 passed /
+  15 skipped (504), 60 files (57 passed, 3 fully skipped); coverage 82.80%
+  statements/lines, 81.56% branches, 90.98% functions.
+- No live model or real-channel run in this session. Branch protection was
+  not bypassed.
+
+### Pending
+
+- Land the cycle-8 checkpoint after CI.
+- Evaluate SEMANTIC-LTM; draft `--rotate-token` only on owner request.
+
+## 2026-11-04 — Cycle 7 (Feishu inbound loop, stale-token ADR, group identity; checkpoint)
+
+### Observed
+
+- Cycle 6 closed at `3bdb90a` with green post-merge CI (run `41794376297`).
+  Cycle 7 dispatched two disjoint tasks: FEISHU-SERVE-LOOP (P2) and the
+  STALE-GATEWAY-TOKEN ADR (P1 security residual). Peer session sulin-3a ran
+  GROUP-UNKNOWN-DISAMBIGUATION in parallel on files disjoint from both.
+- #106 merged the opt-in `serve --feishu` loop at `e9a1978`; #105 merged
+  ADR-009 at `69b6d3d` after one accuracy correction; #107 merged the
+  `chat.ROWID` thread-key fallback at `00665d2`.
+- The #105 draft stated the failing empty-token path never chmods. That was
+  false: `ensurePrivateMode` tightens a loosened mode to 0600 on every read, so
+  the ADR was corrected to treat mode repair as the standing invariant (probe:
+  0644 → error → 0600, same inode, empty content). This was the only blocking
+  review finding in the cycle.
+
+### Decided
+
+- Keep ADR-009's fail-closed policy: never auto-regenerate a stale empty token
+  file; recovery is an explicit operator action. The implementation follow-up
+  (distinct stale-empty error, fail-closed client read) remains a candidate.
+- Merge order was #106 → #105 → #107 because strict up-to-date protection
+  invalidated each later branch; every branch was refreshed and re-ran CI.
+- Next candidates: the ADR-009 implementation, SEMANTIC-LTM evaluation, and an
+  operator move (`--rotate-token`) only if requested. Feishu live acceptance is
+  operator-only and was not performed.
+
+### Verified
+
+- Local offline suite on `00665d2`: 470 passed / 55 files (live files
+  excluded). Local Feishu tests: 28/28.
+- PR CI: #106 `6c2f1da` run `41795247006`; #105 `42d313a` run `41795531295`;
+  #107 `74c627e` run `41795794639` — all `typecheck and test` green, zero
+  unresolved threads.
+- Post-merge `main` CI green on `e9a1978` (run `41795497081`) and `69b6d3d`
+  (run `41795761804`).
+- No live model or Feishu network run in this session. Branch protection was
+  not bypassed.
+
+### Pending
+
+- Land the cycle-7 checkpoint after CI.
+- Implement ADR-009's diagnostics and client fail-closed behavior in a later
+  cycle.
+
+## 2026-11-04 — Cycle 6 (serve loop, outbox permanent failure, pump follow-up; checkpoint)
+
+### Observed
+
+- Cycle 6 dispatched two disjoint tasks after the cycle-5 reconciliation:
+  SERVE-CHANNEL-LOOP (P1) and OUTBOX-PERMANENT-FAILURE (P2). MESH-FAILURE-PUMP
+  was merged by a peer session as #99 (`6184a27`) while those ran.
+- #100 (`55f0d09`) merged the permanent/transient outbox split; #101
+  (`2ae9740`) merged the inbound iMessage loop for `serve` after a docs
+  correction (pull/ingest error wording and the chat retry-cadence
+  compatibility note). Peer session sulin-5f merged #103 (`5e5a28b`, test-only
+  subscription fan-out determinism).
+- A peer session's cycle-5 docs follow-up (#102) was refreshed onto `5e5a28b`
+  and merged at `55f3e7b`, adding ADR-008, the cycle-5 audit figures, and the
+  #96/#97 review corrections.
+- The earlier `docs/cycle-6-checkpoint` head could not be merged directly
+  because #102 rewrote the same five docs files; the resolution was to take
+  #102's merged docs as the base and re-apply the cycle-6 record on top.
+
+### Decided
+
+- Keep one cycle-6 checkpoint after #102 rather than merging two overlapping
+  docs PRs. Do not reopen or rewrite merged entries; record corrections as
+  review-log entries.
+- Next-session queue: SEMANTIC-LTM evaluation, the stale-gateway-token ADR,
+  FEISHU-SERVE-LOOP on the shared channel-loop seam, and the ambiguous-group
+  identity boundary.
+
+### Verified
+
+- Local gate on `5e5a28b`: `tsc --noEmit` clean, `pnpm lint` ok (229 tracked
+  files), `pnpm format:check` clean, offline suite 452 passed / 54 files.
+- `main` `5e5a28b` CI (run `41792700396`, job `126449544790`) succeeded: 464
+  passed / 15 skipped (479 tests), 59 files (56 passed, 3 fully skipped);
+  coverage 463 passed, 55 files, 82.82% statements/lines (7993/9651), 81.09%
+  branches (2878/3549), 90.96% functions (705/775).
+- #102 docs CI green on `e736af4` (run `41793547258`); zero unresolved threads.
+- Peer session sulin-5f ran the full live suite on `5e5a28b`
+  (`DS_AGENT_API_MODEL=auto/deepseek-v4.1-flash`): 476 passed / 3 skipped (479
+  tests), 58 files passed, 567.76s, exit 0; log
+  `/tmp/ds-agent-live-e2e-logs/full-2026-11-04.log`. This session made no live
+  run.
+- No real-channel run. Branch protection was not bypassed.
+
+### Pending
+
+- Land this cycle-6 checkpoint (#104) after CI.
+- Owner has not chosen between SEMANTIC-LTM and the stale-gateway-token ADR for
+  the next cycle.
+
+## 2026-11-04 — Cycle 5 checkpoint follow-up (ADR-008 and audit evidence)
+
+### Observed
+
+- The cycle-5 checkpoint merged as #98 at `ab8e4bf` with five docs files. It
+  did not add ADR-008 or update `docs/PROJECT_AUDIT.md`, and its
+  `docs/DEVELOPMENT_STATUS.md` stated that both #96 gateway-token tests fail on
+  the base.
+- The #96 premise was corrected during review: the EEXIST winner-reuse test
+  does not fail on pre-#87 `10e9f3c`, because the `if (raced) return raced`
+  branch pre-dates #87 and behaves identically. It is mutation-verified
+  (`return token` mutation fails). The create-path ELOOP test does fail on
+  `10e9f3c` with the raw `ELOOP` error.
+- The #97 review also found that after a failed non-queued Worker releases its
+  node the Harness does not `pump()`, so a queued Worker can stay parked with a
+  free node. That work was dispatched as MESH-FAILURE-PUMP and merged as #99
+  (`6184a27`) while this follow-up was being prepared. #100
+  (OUTBOX-PERMANENT-FAILURE) merged at `55f0d09`, #101 (SERVE-CHANNEL-LOOP) at
+  `2ae9740`, and #103 `[SUPER-AGENT][SUBSCRIPTION-FANOUT-TEST] Script the
+  many-to-many workers so fan-out no longer waits on a live model` at
+  `5e5a28b` (test-only `test/subscription.test.ts`, +4/−1).
+- The #99 review (heads `b2b0e4f`/`48aa718`) returned APPROVE: release-then-
+  `pump()` in both `startNow` failure paths, gated on a picked node, with a
+  deterministic queued-Worker regression test. CI was green on `48aa718`
+  (run `41791142621`).
+
+### Decided
+
+- Correct the #96 statement in place in the living status/plan docs and add the
+  non-vacuity correction to the review log rather than rewriting the merged #98
+  entry.
+- Add ADR-008 for #97's release-and-resolve behavior and record the cycle-5
+  merges and exact `9a0def3` CI figures in the audit conclusion.
+
+### Verified
+
+- `main` `9a0def3` CI (run `41615496540`) succeeded: 455 passed / 15 skipped
+  (470 tests, 58 files); coverage 454 passed across 54 files, 82.42%
+  statements/lines (7844/9517), 81.01% branches (2817/3477), 90.11% functions
+  (693/769).
+- Docs-only follow-up; `pnpm typecheck`, `pnpm lint`, and `pnpm format:check`
+  pass. No live model or real-channel run.
+- No GitHub review threads remained on #95–#97.
+
+### Pending
+
+- Write the cycle-6 checkpoint; do not reopen merged PRs.
+
+## 2026-11-04 — Cycle 5 (post-cap follow-ups merged; checkpoint)
+
+### Observed
+
+- The previous orchestrator process ended after merging #95–#97 without a
+  checkpoint: `.super-agent/state.json` still said `next_action: integrate`
+  with PR #97 "awaiting refreshed CI", and the docs still described `8fa3a79`.
+  The two peer sessions were idle for more than 20 hours.
+- `main` is `9a0def3`: #94 (owner, docs-only live reference run), #95, #96,
+  and #97 merged. #97 merged at 09:59:34Z with `typecheck and test` green and
+  zero unresolved review threads.
+- Local `9a0def3` gate: `tsc --noEmit`, `pnpm lint` (227 files),
+  `pnpm format:check` clean; offline suite 443 passed / 53 files.
+
+### Decided
+
+- Resume the loop in this session under the owner's explicit continuation past
+  the four-cycle cap; record the override rather than silently reset it.
+- Checkpoint cycle 5 before dispatching cycle 6, so `main` documents the state
+  the next PRs branch from.
+- Cycle 6 scope: SERVE-CHANNEL-LOOP (P1) and OUTBOX-PERMANENT-FAILURE (P2),
+  the two highest-value residuals that do not share files.
+
+### Verified
+
+- #95 (metrics assertions) and #96 (gateway token EEXIST/ELOOP tests) are
+  test-only; #97 releases the reserved mesh node when a non-queued Worker turn
+  rejects asynchronously and records `[harness] worker failed ...`.
+- Reviewed heads: #95 `11313cd`, #96 `b19e490`, #97 `f18e16f`; merged as
+  `f8554cc`, `ac1fd79`, `9a0def3`.
+- Branch protection was not bypassed; no live model or real-channel run.
+
+### Pending
+
+- Review the two cycle-6 PRs; write the cycle-6 checkpoint.
+
+## 2026-11-03 — Cycle 4 checkpoint (follow-ups merged; session at cycle cap)
+
+### Observed
+
+- The previous session process ended while three implementers and three
+  reviewers were running. On restart, the merged PRs (#87–#89) were intact; the
+  lost worktrees were recreated from their pushed branches, and the three
+  cycle-4 reviewers were re-dispatched fresh. No result was assumed from the
+  interrupted run.
+- #90 merged at `8fa3a79` after an independent APPROVE: group thread keys are
+  `chat:`/`group:`/`group-unknown:` and can never equal a 1:1 `handle:` key;
+  positive-group guids and identifiers aggregate independently. Three
+  behavioral tests fail on the pre-fix base; the "guid thread" and "1:1 keys"
+  tests are regression guards.
+- #91 merged at `1dd426a` after an independent APPROVE, re-landing the four
+  test-only determinism changes from #86. The default MockModel refusal still
+  holds; only the credential sentinel opts in explicitly. #86 was closed as
+  superseded; its docs conflict with `main` and its live-run record remains in
+  PR history without being reproduced.
+- #92 merged at `60bb9ae` after an independent APPROVE: six previously
+  untested `queueState()` skip branches now have direct tests, and a
+  synchronous throw on the non-queued start path releases the active marker
+  and mesh node instead of rejecting the launch. The cleanup test fails on the
+  base; the branch tests were mutation-verified.
+- `main` CI at `8fa3a79` (run `41605279682`): 452 passed / 15 skipped (467),
+  58 files; 82.39% statements/lines (7837/9512), 80.97% branches (2814/3475),
+  90.11% functions (693/769).
+
+### Decided
+
+- Close #86 rather than rebase; the test-only changes are on `main` via #91,
+  and its docs record cannot merge as-is.
+- Accept these residual non-blocking items for a later session: gateway EEXIST
+  winner-reuse and create-path ELOOP tests; the tautological replacement
+  assertions in `test/metrics.test.ts`; the unchanged async-rejection node
+  release on the non-queued path; fail-closed group outbox retry noise.
+- Stop at the four-cycle session cap.
+
+### Verified
+
+- All four cycle-4 review verdicts (including #89) were independent and
+  recorded; every merge had green `typecheck and test` on its exact head.
+- No live model or real-channel run; no credentials used.
+
+### Pending
+
+- Next session: pick from `docs/MASTER_PLAN.md` "Next sessions" and start from
+  current `main`. Do not reopen merged PRs.
+
+## 2026-11-03 — Cycle 3 checkpoint 2 (gateway merged; iMessage fix and docs corrected)
+
+### Observed
+
+- The checkpoint-1 entry above first stated 80.09% branches for `10e9f3c`. The
+  CI job (`125790452074`) displays 80.05% (2746/3430); the entry was corrected
+  in place before merge. The 80.09% figure was a local V8 variance, not CI.
+- #87 merged at `5fbfb00` after an independent security review APPROVE. The
+  EEXIST race now fails closed instead of truncating the winner's file, ELOOP
+  raises `GatewayTokenFileError` on read and create, and both security tests
+  fail on `10e9f3c`. `main` CI at `5fbfb00` (run `41599524227`) is green:
+  429 passed / 15 skipped (444), 58 files; 82.27% statements/lines, 80.52%
+  branches (2779/3451), 89.97% functions.
+- PR #88's review reproduced a group-to-1:1 outbound leak: a group address
+  still carried the sender `handle`, and the outbox adapter fell back to buddy
+  mode when no `chatGuid` existed. A fix at `890f238` omits `handle` for groups
+  and makes the adapter reject a group target without a chat guid. The delta
+  re-review returned APPROVE; #88 merged at `d3beb9c`. `main` CI there (run
+  `41600424146`) is green: 440 passed / 15 skipped (455), 58 files; 82.29%
+  statements/lines, 80.57% branches (2787/3459), 89.97% functions.
+- PR #89's docs review returned REQUEST_CHANGES for a CI coverage misquote and
+  an open-PR snapshot that claimed "none" while #86/#88/#89 were open. The
+  docs were refreshed to `5fbfb00` and the duplicate #74 record marked
+  superseded.
+
+### Decided
+
+- The iMessage fix keeps the ambiguous-group thread-key issue out of scope; it
+  is recorded as IMESSAGE-THREAD-KEY for a later branch rather than widening
+  the security PR.
+- #86 is stale/DIRTY; its docs portion is superseded and only its three
+  test-only determinism changes are to be salvaged on a fresh branch.
+
+### Verified
+
+- No live model or real-channel run. All figures above come from the named CI
+  run logs and `git`/GitHub state.
+
+### Pending
+
+- Scoped re-review of PR #89; merge it only on green CI at the exact head.
+- Salvage #86's test-only determinism changes on a fresh branch, then close the
+  stale PR with a pointer to the replacement.
+
+## 2026-11-03 — Cycle 3 checkpoint 1 (cycle 2 integrated; edge work dispatched)
+
+### Observed
+
+- #83 merged at `cecfba0` after the scoped re-review APPROVE; all five blocking
+  doc findings and three CodeRabbit threads were resolved.
+- #74 merged at `299b908` after the final coverage-figure fix and delta APPROVE.
+  `main` now carries the `34aef25` audit evidence.
+- #85 merged at `10e9f3c` after the re-review APPROVE. The review reproduced a
+  same-process re-recovery bug; the final head has a per-Runtime guard, prompt
+  injection, launch-failure isolation, crash-boundary relaunch, and per-ticket
+  isolation. All 11 regression tests fail on the pre-fix base.
+- `main` CI at `10e9f3c`: `typecheck and test` success; 425 passed, 15 skipped
+  (440), 56 files; coverage 82% lines, 80.05% branches (2746/3430), 89.85%
+  functions. A local run on the same commit reported 80.09% branches
+  (2748/3431), a one-branch V8 variance.
+
+### Decided
+
+- Accept ADR-004 as implemented. The at-least-once boundary and the
+  malformed-doc partial-write edge stay documented as non-blocking.
+- Start cycle 3 with two disjoint security-edge tasks: iMessage group join/page/
+  ambiguity coverage and gateway first-create/ELOOP hardening.
+- Do not reopen merged PRs for non-blocking follow-ups; new branches only.
+
+### Verified
+
+- `main` CI green at `10e9f3c`; no live model or real-channel run.
+- Both cycle-3 branches are isolated; no file overlap with each other or docs.
+
+### Pending
+
+- PRs and independent reviews for IMESSAGE-GROUP-EDGES and GATEWAY-TOKEN-RACE.
+
+## 2026-11-03 — Cycle 2, checkpoint 2 (state review corrected; P1-6 in review)
+
+### Observed
+
+- PR #83's independent review returned REQUEST_CHANGES on five stale/incorrect
+  statements: the pre-#79 Harness direct-write claim in two docs, a stale Task 1
+  "post-merge fix pending", a present-tense default-open iMessage description,
+  and a branch-coverage transcription (80.05% local vs 80.06% CI on `34aef25`).
+- PR #74's refreshed review returned REQUEST_CHANGES: its revision row claimed
+  "#75–#84 merged" while #83 was open, and the `34aef25` evidence was not yet in
+  `docs/PROJECT_AUDIT.md` on `main`.
+- P1-6 implementation opened PR #85 (`4b3ad35`) with six tests and a clean CI
+  run; the orchestrator review found the RECOVERED prompt is persisted but not
+  included in the relaunched Worker prompt.
+
+### Corrected
+
+- #83 head `e0bee0f` fixes all five findings; scoped re-review returned APPROVE.
+  CI passed on the exact head (414 passed / 15 skipped).
+- #74 head `3119369` corrects the merge-range claim and labels; it will merge
+  `main` after #83 lands so the audit evidence is documented on `main`.
+
+### Verified
+
+- `pnpm typecheck`, `pnpm lint` (224 files), and `pnpm format:check` pass on the
+  corrected docs branches.
+- No code, credential, or live-model changes were made in either docs PR.
+
+### Pending
+
+- Merge #83; refresh and re-review #74.
+- Fix the P1-6 RECOVERED-prompt gap and re-review #85.
+
+## 2026-11-03 — Cycle 2, checkpoint 1 (corrections merged)
+
+### Observed
+
+- #81 merged at `f4ba77a` after an independent APPROVE review. The multi-chat
+  group dedupe, missing-metadata, handle-trim, and schema-error findings are
+  fixed. Residual: two test gaps and an ambiguous group-id fallback.
+- #82 merged at `1c165ef` after an independent APPROVE review. Symlink,
+  hard-link, and non-regular token paths are rejected; fail-closed/SSE/401/CLI
+  tests are added. Residual: first-create race, ELOOP fallback, two test gaps.
+- #79 merged at `1dc9500` before its review completed. The review returned
+  REQUEST_CHANGES: release hooks fire before terminal persistence, so a queued
+  Worker can start after its ticket ended. #84 merged at `34aef25` after an
+  independent APPROVE review; the pump now waits for committed state and
+  revalidates before start.
+- `34aef25` gates: typecheck/lint (224 files)/format pass; 414 passed,
+  15 skipped (429); coverage 81.81% lines, 80.06% branches, 89.77% functions.
+- `#80` merged as a docs checkpoint at `2c02f4b`; its P1-3 statement was stale
+  before merge and is superseded here.
+
+### Decided
+
+- Merge #81 and #82 only after clean reviews and green CI; both are now merged.
+- Do not call the mesh queue correct until #84 merges; it is now merged.
+- Refresh PR #74 after #84, not before.
+
+### Verified
+
+- Independent reviews: #81 APPROVE, #82 APPROVE, #79 REQUEST_CHANGES,
+  #84 APPROVE.
+- The #84 regression fails on the pre-fix base and passes on the fix.
+- No live model or real-channel writes were performed.
+
+### Pending
+
+- Rebase and refresh PR #74.
+- Dispatch P1-6.
+
+## 2026-11-03 — Cycle 2 (deployment and review reconciliation)
+
+> Preserved verbatim from `main`; the checkpoint entries above supersede its
+> status but do not replace this record.
+
+### Observed
+
+- `main` advanced from `bb11c96` to `03a4c02`; four PRs were open (#74–#77).
+- #75 was BEHIND and blocked by six CodeRabbit threads; #76/#77 were BEHIND.
+- The orchestration config did not exist yet (no CLAUDE.md, agents, skill, or
+  Stop guard).
+
+### Decided
+
+- Deploy the orchestration layer on its own branch/PR, not on top of the docs
+  branch.
+- Treat the stale PR #74 as blocked; refresh it only after P1-3 edits the same
+  docs.
+- Merge #75/#76/#77 only after required checks, independent review, and
+  resolving every review thread.
+
+### Executed
+
+- #78: CLAUDE.md, five agents, autonomous-engineering skill, Stop guard,
+  gitignore rules. Nine guard cases tested.
+- #75: fixed six review findings in `deed616`, answered/resolved all threads.
+- #76 and #77: reviewed against the audit findings; both merged.
+
+### Verified
+
+- Offline suite on `03a4c02`: 376 passed / 50 files.
+- CI green on every merged PR; branch protection was not bypassed.
+
+### Pending
+
+- P1-3 is unfinished (worktree edits, no commit).
+- AUDIT-REFRESH after P1-3; P1-6 after P1-3; GATEWAY-REVIEW coverage.
+
+## 2026-11-03 — Cycle 1, checkpoint 3 (integration at `03a4c02`)
+
+### Observed
+
+- Another session integrated #75, #76, and #77 into `main` at `08ea78f`,
+  `aae182c`, and `03a4c02`. CI was green on each exact head.
+- #77 was merged despite the independent REQUEST_CHANGES verdict on multi-chat
+  group dedupe. The merged code still classifies a message joined to a 1:1 chat
+  first and a group chat second as 1:1, and missing chat metadata defaults to
+  1:1.
+- #75 merged at `deed616`, before the final reconciliation commit `bdce7ea`.
+  The merged docs still carry the `bb11c96` baseline and stale counts.
+- #76 merged the gateway hardening with an APPROVE review. The symlink
+  redirection and missing fail-closed/SSE/401 tests remain.
+- P1-3 finished as PR #79 with Engine-owned placement; independent review is
+  running.
+- `03a4c02` gates: typecheck/lint (224 files)/format pass; 388 passed,
+  15 skipped (403); coverage 81.00% lines, 79.84% branches, 89.37% functions.
+
+### Decided
+
+- Treat the #77 merge as a process incident. Open the corrective PR #81
+  immediately; do not call the iMessage surface fail-closed until it merges.
+- Ship the reconciled docs in a new PR from `main`; do not rewrite history or
+  force-push a merged branch.
+- Review #79 and the gateway token follow-up independently before merge.
+
+### Dispatched
+
+- IMESSAGE-GROUP-FIX: #81, aggregate groupness across all joined chats.
+- GATEWAY-TOKEN-SYMLINK: symlink/non-regular token rejection and
+  security-branch tests.
+- P1-3 review: independent concurrency review of #79.
+
+### Verified
+
+- #81 reports CI green and 395 passed / 15 skipped; independent review pending.
+- No live model or real-channel writes were performed.
+
+### Pending
+
+- Merge #81 and #79 only after clean independent review.
+- Merge the gateway token follow-up.
+- Then P1-6 and PR #74 refresh.
+
+## 2026-11-03 — Cycle 1, checkpoint 2 (main advanced to `cb32a17`)
+
+### Observed
+
+- PR #78 merged while the first batch was running, adding the single-orchestrator
+  contract, 3-implementation-agent cap, 4-cycle session cap, and
+  `.super-agent/state.json` protocol. `main` is now `cb32a17`.
+- #76 and #77 both merged current `main`; their effective diffs stayed limited
+  to the assigned files. CI is green on both heads.
+- Independent gateway review returned **APPROVE** with non-blocking follow-ups:
+  token-file symlinks are followed, and fail-closed/SSE/identical-401 tests are
+  missing.
+- Independent iMessage review returned **REQUEST_CHANGES**: a message joined to
+  multiple chats is deduped to the first row, so a group message can still be
+  classed 1:1 and marked `direct`; missing chat metadata also defaults to 1:1.
+- P1-3 implementer completed PR #79: bounded queue, FIFO pump, explicit shutdown
+  drain, metrics, and Engine-owned `Assignment.node` placement. Full suite
+  reported 380 passed / 15 skipped.
+- Fresh `cb32a17` gates: typecheck/lint (217 files)/format pass; 372 passed,
+  15 skipped (387); coverage 80.68% statements/lines, 79.67% branches,
+  89.72% functions.
+
+### Decided
+
+- Keep the project-state docs in their own PR; do not count them as a fourth
+  implementation task.
+- Move AUDIT-REFRESH from Cycle 1 to Cycle 2: it shares `docs/ROADMAP.md` and
+  `docs/MODULES.md` with P1-3 and must follow it.
+- Record the `Assignment.node` write as a known deviation from "Engine is the
+  only writer"; P1-3 now removes it through `Engine.assignmentPlaced`.
+- Do not merge #77 until groupness is aggregated across all joined chat rows and
+  missing metadata fails closed.
+- Accept #76 on its APPROVE verdict; track symlink hardening and missing
+  security-branch tests as GATEWAY-TOKEN-SYMLINK.
+
+### Dispatched
+
+- iMessage fix round on `agent/imessage-admission`: aggregate group metadata,
+  trim the handle before SQL, fail clearly on old schema, add the missing
+  fixtures.
+
+### Verified
+
+- Docs corrections and the new baseline are in this PR.
+- No live model or real-channel writes were performed.
+
+### Pending
+
+- Re-review #77 and review #79.
+- Merge #76, then dispatch GATEWAY-TOKEN-SYMLINK.
+- P1-6 and AUDIT-REFRESH after P1-3 merges.
+- Update `.super-agent/state.json` at the next checkpoint.
+
+## 2026-11-03 — Cycle 1
+
+### Observed
+
+- `main` at `bb11c96`; clean tree; origin in sync.
+- One open PR: #74, docs-only, `MERGEABLE`, `BEHIND`, CI green, base `fa974ca`.
+- Issues disabled. Branch protection requires `typecheck and test` and
+  conversation resolution; admins enforced.
+- Offline gate: typecheck/lint/format pass; 372 passed, 15 skipped; coverage
+  80.68% lines / 79.69% branches / 89.72% functions.
+- #64 merged 4,390 lines of iMessage/gateway code after the last audit.
+
+### Decided
+
+- Do not merge PR #74 as-is: its audit evidence predates #64. Refresh it after
+  P1-3's docs edits.
+- Treat iMessage default-open admission as IMESSAGE-ADMISSION (security), not a docs nit.
+- Enforce mesh capacity before attempting restart recovery, because both change
+  the Harness scheduler.
+- Keep the Engine as the only domain writer; the mesh queue stays in the
+  Harness and is explicitly process-local.
+
+### Dispatched
+
+- IMESSAGE-ADMISSION iMessage admission — `agent/imessage-admission`.
+- P1-3 mesh backpressure — `agent/P1-3-mesh-backpressure`.
+- GATEWAY-HARDENING gateway hardening — `agent/gateway-hardening`.
+
+### Verified
+
+- Baseline commands and outputs are recorded in `docs/PROJECT_AUDIT.md`.
+- No live model or real-channel writes were performed.
+
+### Pending
+
+- Implementer reports and PR URLs.
+- Independent review of each PR.
+- Rebase/refresh PR #74.
+- P1-6 after P1-3 merges.
+
+## 2026-11-03 — Cycle 0 (initial audit)
+
+- Located the canonical clone at the repository root.
+- Confirmed GitHub authentication and Node/pnpm versions.
+- Read `PLAN.md` structure, `docs/ROADMAP.md` status board, module tree, and the
+  new gateway/iMessage code.
+- Created the project-state documents and the master plan.

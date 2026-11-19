@@ -1,0 +1,503 @@
+import fs from 'node:fs'
+import path from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
+import type { LifecycleEvent } from '../core/lifecycle.ts'
+import type { DomainEventName } from '../shared/events.ts'
+import type { JobRow, ObjectRef, OutboxRow, ReplyRow, SessionRow } from '../shared/types.ts'
+import { migrate } from './schema.ts'
+
+export class Store {
+  readonly path: string
+  private readonly db: DatabaseSync
+  private depth = 0
+  private closed = false
+  private schemaVersionValue = 0
+
+  constructor(home: string) {
+    fs.mkdirSync(home, { recursive: true })
+    this.path = path.join(home, 'ds-agent.db')
+    this.db = new DatabaseSync(this.path)
+    try {
+      this.schemaVersionValue = migrate(this.db)
+    } catch (error) {
+      try {
+        this.db.close()
+      } catch {
+        // The handle may already be unusable.
+      }
+      throw error
+    }
+    // Switch to WAL only after migrating: a database recorded at a newer
+    // version must fail closed without touching the file.
+    this.db.exec('PRAGMA journal_mode = WAL')
+  }
+
+  /** The schema version recorded in this database after migration. */
+  get schemaVersion(): number {
+    return this.schemaVersionValue
+  }
+
+  get isOpen(): boolean {
+    return !this.closed
+  }
+
+  close(): void {
+    if (this.closed) return
+    this.db.exec('PRAGMA wal_checkpoint(TRUNCATE)')
+    this.db.close()
+    this.closed = true
+  }
+
+  health(): string {
+    const row = this.db.prepare('SELECT 1 AS ok').get() as { ok: number } | undefined
+    if (row?.ok !== 1) throw new Error('sqlite health check failed')
+    return 'ok'
+  }
+
+  atomic<T>(work: () => T): T {
+    if (this.depth > 0) return work()
+    this.depth += 1
+    try {
+      this.db.exec('BEGIN')
+      const result = work()
+      this.db.exec('COMMIT')
+      return result
+    } catch (error) {
+      try {
+        this.db.exec('ROLLBACK')
+      } catch {
+        // The transaction may already be closed.
+      }
+      throw error
+    } finally {
+      this.depth -= 1
+    }
+  }
+
+  nextId(prefix: string): string {
+    const row = this.db.prepare(
+      `INSERT INTO id_seq(prefix, n) VALUES(?, 1)
+       ON CONFLICT(prefix) DO UPDATE SET n = n + 1
+       RETURNING n`,
+    ).get(prefix) as { n: number }
+    return `${prefix}_${row.n}`
+  }
+
+  putDoc(kind: string, id: string, value: unknown): void {
+    this.db.prepare(
+      `INSERT INTO documents(kind, id, payload) VALUES(?, ?, ?)
+       ON CONFLICT(kind, id) DO UPDATE SET payload = excluded.payload`,
+    ).run(kind, id, JSON.stringify(value))
+  }
+
+  getDoc<T>(kind: string, id: string): T | undefined {
+    const row = this.db.prepare(
+      'SELECT payload FROM documents WHERE kind = ? AND id = ?',
+    ).get(kind, id) as { payload: string } | undefined
+    return row ? JSON.parse(row.payload) as T : undefined
+  }
+
+  listDocs<T>(kind: string): T[] {
+    const rows = this.db.prepare(
+      'SELECT payload FROM documents WHERE kind = ? ORDER BY rowid',
+    ).all(kind) as { payload: string }[]
+    return rows.map(row => JSON.parse(row.payload) as T)
+  }
+
+  deleteDoc(kind: string, id: string): void {
+    this.db.prepare('DELETE FROM documents WHERE kind = ? AND id = ?').run(kind, id)
+  }
+
+  addEvent(type: DomainEventName, payload: unknown): void {
+    this.db.prepare(
+      'INSERT INTO events(type, payload, created_at) VALUES(?, ?, ?)',
+    ).run(type, JSON.stringify(payload), new Date().toISOString())
+  }
+
+  listEvents(): { type: DomainEventName; payload: unknown; createdAt: string }[] {
+    const rows = this.db.prepare(
+      'SELECT type, payload, created_at FROM events ORDER BY id',
+    ).all() as { type: DomainEventName; payload: string; created_at: string }[]
+    return rows.map(row => ({
+      type: row.type,
+      payload: JSON.parse(row.payload) as unknown,
+      createdAt: row.created_at,
+    }))
+  }
+
+  /**
+   * Persist one lifecycle event. When `keep` is set, the log is bounded in the
+   * same transaction: only the newest `keep` rows survive, so the table cannot
+   * grow without limit. `at` is write-time metadata, not part of the event
+   * read model returned by `recentLifecycleEvents`.
+   */
+  appendLifecycleEvent(event: LifecycleEvent, keep?: number): void {
+    this.atomic(() => {
+      this.db.prepare(
+        'INSERT INTO lifecycle_events(at, kind, payload) VALUES(?, ?, ?)',
+      ).run(new Date().toISOString(), event.kind, JSON.stringify(event.payload) ?? 'null')
+      if (keep !== undefined) this.pruneLifecycleEvents(keep)
+    })
+  }
+
+  /** The newest `limit` lifecycle events in publish order. */
+  recentLifecycleEvents(limit: number): LifecycleEvent[] {
+    if (!Number.isSafeInteger(limit) || limit < 1) return []
+    const rows = this.db.prepare(
+      'SELECT kind, payload FROM lifecycle_events ORDER BY id DESC LIMIT ?',
+    ).all(limit) as { kind: string; payload: string }[]
+    return rows.reverse().map(row => ({
+      kind: row.kind,
+      payload: JSON.parse(row.payload) as unknown,
+    }))
+  }
+
+  /** Keep only the newest `keep` lifecycle rows; older rows are deleted. */
+  pruneLifecycleEvents(keep: number): void {
+    if (!Number.isSafeInteger(keep) || keep < 1) {
+      throw new Error('lifecycle retention must be a positive integer')
+    }
+    this.db.prepare(
+      `DELETE FROM lifecycle_events
+       WHERE id NOT IN (SELECT id FROM lifecycle_events ORDER BY id DESC LIMIT ?)`,
+    ).run(keep)
+  }
+
+  addReply(row: ReplyRow): void {
+    this.db.prepare(
+      `INSERT INTO replies(id, ticket_id, channel, purpose, text, status, created_at)
+       VALUES(?, ?, ?, ?, ?, ?, ?)`,
+    ).run(row.id, row.ticketId, row.channel, row.purpose, row.text, row.status, row.createdAt)
+  }
+
+  markReplySent(id: string): void {
+    this.db.prepare(`UPDATE replies SET status = 'sent' WHERE id = ?`).run(id)
+  }
+
+    listReplies(): ReplyRow[] {
+    const rows = this.db.prepare(
+      'SELECT id, ticket_id, channel, purpose, text, status, created_at FROM replies ORDER BY rowid',
+    ).all() as Record<string, string>[]
+    return rows.map(row => ({
+      id: row.id,
+      ticketId: row.ticket_id,
+      channel: row.channel,
+      purpose: row.purpose,
+      text: row.text,
+      status: row.status as ReplyRow['status'],
+      createdAt: row.created_at,
+    }))
+  }
+
+  enqueueOutbox(row: OutboxRow): void {
+    this.db.prepare(
+      `INSERT INTO outbox(
+         id, reply_id, ticket_id, channel, thread, target, text, status,
+         idempotency_key, attempts, next_attempt_at, external_id, error, created_at, sent_at
+       ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, NULL)`,
+    ).run(
+      row.id,
+      row.replyId,
+      row.ticketId,
+      row.channel,
+      row.thread,
+      JSON.stringify(row.target),
+      row.text,
+      row.status,
+      row.idempotencyKey ?? row.replyId,
+      row.attempts ?? 0,
+      row.createdAt,
+    )
+  }
+
+  listOutbox(status?: OutboxRow['status']): OutboxRow[] {
+    const rows = (status
+      ? this.db.prepare(
+        `SELECT * FROM outbox WHERE status = ? ORDER BY rowid`,
+      ).all(status)
+      : this.db.prepare('SELECT * FROM outbox ORDER BY rowid').all()) as Record<string, string | null>[]
+    return rows.map(outboxFromRow)
+  }
+
+  /** Pending rows whose backoff has elapsed. */
+  listDueOutbox(now = new Date().toISOString()): OutboxRow[] {
+    const rows = this.db.prepare(
+      `SELECT * FROM outbox
+       WHERE status = 'pending'
+         AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
+       ORDER BY rowid`,
+    ).all(now) as Record<string, string | null>[]
+    return rows.map(outboxFromRow)
+  }
+
+  /** Atomically claim a row so two flushers cannot send it twice. */
+  claimOutbox(id: string): boolean {
+    const result = this.db.prepare(
+      `UPDATE outbox SET status = 'sending' WHERE id = ? AND status = 'pending'`,
+    ).run(id)
+    return Number(result.changes ?? 0) > 0
+  }
+
+  markOutboxSent(id: string, externalId?: string): void {
+    this.db.prepare(
+      `UPDATE outbox SET status = 'sent', external_id = ?, sent_at = ?, next_attempt_at = NULL WHERE id = ?`,
+    ).run(externalId ?? null, new Date().toISOString(), id)
+  }
+
+  markOutboxRetry(id: string, error: string, nextAttemptAt: string, attempts: number): void {
+    this.db.prepare(
+      `UPDATE outbox SET status = 'pending', error = ?, next_attempt_at = ?, attempts = ? WHERE id = ?`,
+    ).run(error, nextAttemptAt, attempts, id)
+  }
+
+  markOutboxFailed(id: string, error: string): void {
+    this.db.prepare(
+      `UPDATE outbox SET status = 'failed', error = ?, next_attempt_at = NULL WHERE id = ?`,
+    ).run(error, id)
+  }
+
+  /** Mid-send rows after a crash: unknown outcome until the owner releases retry. */
+  markSendingOutboxUnknownOutcome(): number {
+    const result = this.db.prepare(
+      `UPDATE outbox SET status = 'unknown_outcome', error = COALESCE(error, 'interrupted while sending') WHERE status = 'sending'`,
+    ).run()
+    return Number(result.changes ?? 0)
+  }
+
+  /** After UNKNOWN-OUTCOME approval: return rows to pending for idempotent drain. */
+  requeueUnknownOutcomeOutbox(ticketId: string): number {
+    const result = this.db.prepare(
+      `UPDATE outbox SET status = 'pending', next_attempt_at = NULL WHERE status = 'unknown_outcome' AND ticket_id = ?`,
+    ).run(ticketId)
+    return Number(result.changes ?? 0)
+  }
+
+  /** Release only the named uncertain rows after an effect-scoped decision. */
+  requeueUnknownOutcomeOutboxIds(ticketId: string, ids: readonly string[]): number {
+    if (ids.length === 0) return 0
+    const placeholders = ids.map(() => '?').join(', ')
+    const result = this.db.prepare(
+      `UPDATE outbox
+       SET status = 'pending', next_attempt_at = NULL
+       WHERE status = 'unknown_outcome' AND ticket_id = ? AND id IN (${placeholders})`,
+    ).run(ticketId, ...ids)
+    return Number(result.changes ?? 0)
+  }
+
+  /** Record an operator's decision that an uncertain delivery already happened. */
+  acknowledgeUnknownOutcomeOutboxIds(ticketId: string, ids: readonly string[]): number {
+    if (ids.length === 0) return 0
+    const placeholders = ids.map(() => '?').join(', ')
+    const result = this.db.prepare(
+      `UPDATE outbox
+       SET status = 'failed', error = 'operator acknowledged unknown outcome', next_attempt_at = NULL
+       WHERE status = 'unknown_outcome' AND ticket_id = ? AND id IN (${placeholders})`,
+    ).run(ticketId, ...ids)
+    return Number(result.changes ?? 0)
+  }
+
+  /**
+   * @deprecated Uncertain sends use `unknown_outcome`; operator must approve before requeue.
+   */
+  requeueSending(): number {
+    return this.markSendingOutboxUnknownOutcome()
+  }
+
+  addSubscription(threadKey: string, ticketId: string, at: string): void {
+    this.db.prepare(
+      `INSERT INTO subscriptions(thread_key, ticket_id, created_at) VALUES(?, ?, ?)
+       ON CONFLICT(thread_key, ticket_id) DO NOTHING`,
+    ).run(threadKey, ticketId, at)
+  }
+
+  listSubscriptions(): { threadKey: string; ticketId: string }[] {
+    const rows = this.db.prepare(
+      'SELECT thread_key, ticket_id FROM subscriptions ORDER BY rowid',
+    ).all() as { thread_key: string; ticket_id: string }[]
+    return rows.map(row => ({ threadKey: row.thread_key, ticketId: row.ticket_id }))
+  }
+
+  putSpill(body: string, refs: readonly ObjectRef[] = []): string {
+    const id = this.nextId('spill')
+    this.db.prepare('INSERT INTO spills(id, body, refs, created_at) VALUES(?, ?, ?, ?)')
+      .run(id, body, JSON.stringify(refs), new Date().toISOString())
+    return id
+  }
+
+  getSpill(id: string): string | undefined {
+    const row = this.db.prepare('SELECT body FROM spills WHERE id = ?').get(id) as { body: string } | undefined
+    return row?.body
+  }
+
+  /** Next-hop refs for a spilled object. An unknown ref column reads as `[]`. */
+  getSpillRefs(id: string): ObjectRef[] {
+    const row = this.db.prepare('SELECT refs FROM spills WHERE id = ?').get(id) as { refs?: string } | undefined
+    if (!row?.refs) return []
+    try {
+      const parsed: unknown = JSON.parse(row.refs)
+      return Array.isArray(parsed) ? parsed as ObjectRef[] : []
+    } catch {
+      return []
+    }
+  }
+
+  /** Upsert a spill by id. Used by long-term memory so a ticket keeps one stable body. */
+  replaceSpill(id: string, body: string, refs?: readonly ObjectRef[]): void {
+    if (refs === undefined) {
+      this.db.prepare(
+        `INSERT INTO spills(id, body, refs, created_at) VALUES(?, ?, '[]', ?)
+         ON CONFLICT(id) DO UPDATE SET body = excluded.body`,
+      ).run(id, body, new Date().toISOString())
+      return
+    }
+    this.db.prepare(
+      `INSERT INTO spills(id, body, refs, created_at) VALUES(?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET body = excluded.body, refs = excluded.refs`,
+    ).run(id, body, JSON.stringify(refs), new Date().toISOString())
+  }
+
+  /** Delete a spill body and every grant that pointed at it, in one transaction. */
+  deleteSpill(id: string): void {
+    this.atomic(() => {
+      this.db.prepare('DELETE FROM spill_grants WHERE spill_id = ?').run(id)
+      this.db.prepare('DELETE FROM spills WHERE id = ?').run(id)
+    })
+  }
+
+  grantSpill(spillId: string, grantee: string): void {
+    this.db.prepare(
+      'INSERT INTO spill_grants(spill_id, grantee) VALUES(?, ?) ON CONFLICT(spill_id, grantee) DO NOTHING',
+    ).run(spillId, grantee)
+  }
+
+  spillGrants(spillId: string): string[] {
+    const rows = this.db.prepare(
+      'SELECT grantee FROM spill_grants WHERE spill_id = ? ORDER BY grantee',
+    ).all(spillId) as { grantee: string }[]
+    return rows.map(row => row.grantee)
+  }
+
+  createJob(input: { sessionId: string; ticketId: string; name: string }): JobRow {
+    const row: JobRow = {
+      id: this.nextId('job'),
+      sessionId: input.sessionId,
+      ticketId: input.ticketId,
+      name: input.name,
+      status: 'running',
+      createdAt: new Date().toISOString(),
+    }
+    this.db.prepare(
+      `INSERT INTO jobs(id, session_id, ticket_id, name, status, created_at, finished_at)
+       VALUES(?, ?, ?, ?, ?, ?, NULL)`,
+    ).run(row.id, row.sessionId, row.ticketId, row.name, row.status, row.createdAt)
+    return row
+  }
+
+  completeJob(id: string, status: JobRow['status'] = 'succeeded'): void {
+    this.db.prepare(
+      "UPDATE jobs SET status = ?, finished_at = ? WHERE id = ? AND status = 'running'",
+    ).run(status, new Date().toISOString(), id)
+  }
+
+  getJob(id: string): JobRow | undefined {
+    const row = this.db.prepare(
+      'SELECT id, session_id, ticket_id, name, status, created_at, finished_at FROM jobs WHERE id = ?',
+    ).get(id) as Record<string, string | null> | undefined
+    if (!row) return undefined
+    return {
+      id: String(row.id),
+      sessionId: String(row.session_id),
+      ticketId: String(row.ticket_id),
+      name: String(row.name),
+      status: row.status as JobRow['status'],
+      createdAt: String(row.created_at),
+      finishedAt: row.finished_at ? String(row.finished_at) : undefined,
+    }
+  }
+
+  listJobs(): JobRow[] {
+    const rows = this.db.prepare(
+      'SELECT id, session_id, ticket_id, name, status, created_at, finished_at FROM jobs ORDER BY rowid',
+    ).all() as Record<string, string | null>[]
+    return rows.map(row => ({
+      id: String(row.id),
+      sessionId: String(row.session_id),
+      ticketId: String(row.ticket_id),
+      name: String(row.name),
+      status: row.status as JobRow['status'],
+      createdAt: String(row.created_at),
+      finishedAt: row.finished_at ? String(row.finished_at) : undefined,
+    }))
+  }
+
+  upsertSession(row: SessionRow): void {
+    this.db.prepare(
+      `INSERT INTO sessions(id, role, ticket_id, status, heartbeat, created_at)
+       VALUES(?, ?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET
+         role = excluded.role,
+         ticket_id = excluded.ticket_id,
+         status = excluded.status,
+         heartbeat = excluded.heartbeat`,
+    ).run(row.id, row.role, row.ticketId ?? null, row.status, row.heartbeat, row.createdAt)
+  }
+
+  listSessions(): SessionRow[] {
+    const rows = this.db.prepare(
+      'SELECT id, role, ticket_id, status, heartbeat, created_at FROM sessions ORDER BY rowid',
+    ).all() as Record<string, string | null>[]
+    return rows.map(row => ({
+      id: String(row.id),
+      role: row.role as SessionRow['role'],
+      ticketId: row.ticket_id ? String(row.ticket_id) : undefined,
+      status: row.status as SessionRow['status'],
+      heartbeat: String(row.heartbeat),
+      createdAt: String(row.created_at),
+    }))
+  }
+
+  appendMessage(sessionId: string, role: string, body: string): void {
+    this.db.prepare(
+      'INSERT INTO messages(session_id, role, body, created_at) VALUES(?, ?, ?, ?)',
+    ).run(sessionId, role, body, new Date().toISOString())
+  }
+
+  listMessages(sessionId?: string): { sessionId: string; role: string; body: string }[] {
+    const rows = (sessionId
+      ? this.db.prepare(
+        'SELECT session_id, role, body FROM messages WHERE session_id = ? ORDER BY id',
+      ).all(sessionId)
+      : this.db.prepare(
+        'SELECT session_id, role, body FROM messages ORDER BY id',
+      ).all()) as { session_id: string; role: string; body: string }[]
+    return rows.map(row => ({ sessionId: row.session_id, role: row.role, body: row.body }))
+  }
+
+  addArtifact(ticketId: string, filePath: string): string {
+    const id = this.nextId('art')
+    this.db.prepare(
+      'INSERT INTO artifacts(id, ticket_id, path, created_at) VALUES(?, ?, ?, ?)',
+    ).run(id, ticketId, filePath, new Date().toISOString())
+    return id
+  }
+}
+
+function outboxFromRow(row: Record<string, string | null>): OutboxRow {
+  return {
+    id: String(row.id),
+    replyId: String(row.reply_id),
+    ticketId: String(row.ticket_id),
+    channel: String(row.channel),
+    thread: String(row.thread),
+    target: JSON.parse(String(row.target)) as Record<string, string>,
+    text: String(row.text),
+    status: row.status as OutboxRow['status'],
+    idempotencyKey: row.idempotency_key ? String(row.idempotency_key) : undefined,
+    attempts: row.attempts == null ? 0 : Number(row.attempts),
+    nextAttemptAt: row.next_attempt_at ? String(row.next_attempt_at) : undefined,
+    externalId: row.external_id ? String(row.external_id) : undefined,
+    error: row.error ? String(row.error) : undefined,
+    createdAt: String(row.created_at),
+    sentAt: row.sent_at ? String(row.sent_at) : undefined,
+  }
+}

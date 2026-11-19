@@ -1,0 +1,21 @@
+node_modules
+dist
+coverage
+.ds-agent
+.ds-agent*
+*.log
+uploads
+*.tsbuildinfo
+
+# Super Agent runtime state and per-machine settings
+.super-agent/
+.claude/worktrees/
+.claude/settings.local.json
+local-agents.json
+routines.json
+browser-errands.json
+
+__pycache__/
+
+# Scratch directories written by tests (MCP tool results)
+test/tmp-*/

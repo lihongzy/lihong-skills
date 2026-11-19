@@ -1,0 +1,63 @@
+export { cliTrigger } from './cli.ts'
+export {
+  DEFAULT_GITHUB_REPO,
+  GhCliApi,
+  GithubIssueSource,
+  GithubOutboxAdapter,
+  githubCommentTrigger,
+  githubIssueTrigger,
+  githubRepoFromEnv,
+  issueThread,
+  parseRepo,
+  readGithubComment,
+  runGh,
+  type GithubApi,
+  type GithubComment,
+  type GithubIssue,
+  type GithubPull,
+  type GithubRepoRef,
+} from './github-source.ts'
+export {
+  FeishuApiError,
+  FeishuClient,
+  FeishuOutboxAdapter,
+  FeishuSource,
+  decryptFeishuPayload,
+  feishuConfigFromEnv,
+  feishuThread,
+  feishuTriggerFromMessage,
+  flattenFeishuMessage,
+  parseFeishuWebhook,
+  type FeishuConfig,
+  type FeishuMessage,
+  type FeishuWebhookResult,
+} from './feishu.ts'
+export { githubTrigger } from './github.ts'
+export { A2ARouter, type A2ADelivery, type A2AEnvelope } from './a2a.ts'
+export { LocalA2ATransport, type A2ATransport } from './a2a-transport.ts'
+export { imTrigger } from './im.ts'
+export {
+  APPLE_EPOCH_OFFSET_SECONDS,
+  ChatDbImessageApi,
+  DEFAULT_IMESSAGE_INTERVAL_MS,
+  ImessageOutboxAdapter,
+  ImessageSource,
+  appleDateToIso,
+  decodeAttributedBody,
+  imessageDbPath,
+  imessageThreadFor,
+  imessageTrigger,
+  runOsascript,
+  type ImessageApi,
+  type ImessageInbound,
+  type ImessagePullOptions,
+  type ImessageTarget,
+  type OsascriptRunner,
+} from './imessage.ts'
+export { renderOutbound, truncateWords } from './norms.ts'
+export {
+  Outbox,
+  type OutboundAdapter,
+  type OutboxOptions,
+  type OutboxResult,
+} from './outbox-adapter.ts'

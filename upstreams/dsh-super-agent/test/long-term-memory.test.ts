@@ -1,0 +1,380 @@
+import { describe, expect, it, vi } from 'vitest'
+import { readSpillFor } from '../src/memory/acl.ts'
+import { SpillBackedLongTermMemory } from '../src/memory/long-term.ts'
+import { memoryRetentionFromEnv } from '../src/runtime.ts'
+import type { Ticket } from '../src/shared/types.ts'
+import { Store } from '../src/store/sqlite.ts'
+import { tempHome } from './fixtures.ts'
+
+describe('Long-term memory', () => {
+  it('persists memories and recalls them across ticket ids', () => {
+    const home = tempHome()
+    const store = new Store(home)
+    const memory = new SpillBackedLongTermMemory(store)
+    const saved = memory.put('ticket_a', 'Authentication failed because the token expired.')
+    expect(store.getDoc('ltm', saved.id)).toEqual(saved)
+    expect(store.getSpill(saved.spillId)).toBe('Authentication failed because the token expired.')
+    expect(() => readSpillFor(store, saved.spillId, { ticketId: 'ticket_b' })).toThrow()
+    store.close()
+
+    const reopened = new Store(home)
+    const results = new SpillBackedLongTermMemory(reopened)
+      .query({ ticketId: 'ticket_b', text: 'token expired' })
+    expect(results).toEqual([saved])
+    expect(readSpillFor(reopened, saved.spillId, { ticketId: 'ticket_b' }).text)
+      .toBe('Authentication failed because the token expired.')
+    reopened.close()
+  })
+
+  it('filters by body, limits results, and requires a reader ticket', () => {
+    const store = new Store(tempHome())
+    const memory = new SpillBackedLongTermMemory(store)
+    memory.put('ticket_a', 'A unique stack trace for auth middleware')
+    memory.put('ticket_c', 'Another auth middleware incident')
+    expect(memory.query({ ticketId: 'ticket_b', text: 'auth middleware', limit: 1 })).toHaveLength(1)
+    expect(memory.query({ ticketId: 'ticket_b', text: 'unique stack' })).toHaveLength(1)
+    expect(memory.query({ ticketId: 'ticket_b', text: 'missing' })).toEqual([])
+    expect(() => memory.query({ text: 'auth' })).toThrow(/ticketId/)
+    store.close()
+  })
+
+  it('ranks a tag match above a newer untagged entry', () => {
+    const store = new Store(tempHome())
+    let tick = 0
+    const memory = new SpillBackedLongTermMemory(store, {
+      now: () => new Date(Date.UTC(2026, 0, 1) + tick++ * 1_000),
+    })
+    const tagged = memory.put('ticket_a', 'auth middleware failure', { tags: ['auth'] })
+    const newer = memory.put('ticket_b', 'auth middleware failure')
+
+    expect(newer.createdAt > tagged.createdAt).toBe(true)
+    expect(memory.query({ ticketId: 'reader', text: 'auth' }).map(entry => entry.id))
+      .toEqual([tagged.id, newer.id])
+    store.close()
+  })
+
+  it('ranks more body hits above a newer entry when tag hits tie', () => {
+    const store = new Store(tempHome())
+    let tick = 0
+    const memory = new SpillBackedLongTermMemory(store, {
+      now: () => new Date(Date.UTC(2026, 0, 1) + tick++ * 1_000),
+    })
+    const moreHits = memory.put('ticket_a', 'token token token failure')
+    const newer = memory.put('ticket_b', 'token failure')
+
+    const hits = memory.query({ ticketId: 'reader', text: 'token failure' })
+    expect(hits.map(entry => entry.id)).toEqual([moreHits.id, newer.id])
+    store.close()
+  })
+
+  it('caps each query word at five body hits when scoring', () => {
+    const store = new Store(tempHome())
+    let tick = 0
+    const memory = new SpillBackedLongTermMemory(store, {
+      now: () => new Date(Date.UTC(2026, 0, 1) + tick++ * 1_000),
+    })
+    // Older has 7 hits and newer has 6. Both cap at 5, so recency decides;
+    // without the cap the older entry would win 7 to 6.
+    const uncappedMore = memory.put('ticket_a', 'token token token token token token token')
+    const uncappedLess = memory.put('ticket_b', 'token token token token token token')
+
+    expect(memory.query({ ticketId: 'reader', text: 'token' }).map(entry => entry.id))
+      .toEqual([uncappedLess.id, uncappedMore.id])
+    store.close()
+  })
+
+  it('uses createdAt before lexicographic id when the clock moves backwards', () => {
+    const store = new Store(tempHome())
+    let tick = 1
+    const memory = new SpillBackedLongTermMemory(store, {
+      now: () => new Date(Date.UTC(2026, 0, 1) + tick-- * 1_000),
+    })
+    const newerCreated = memory.put('ticket_a', 'alpha')
+    const olderCreated = memory.put('ticket_b', 'alpha')
+
+    expect(newerCreated.createdAt > olderCreated.createdAt).toBe(true)
+    // Id-desc order conflicts with recency here: ltm_2 > ltm_1.
+    expect(newerCreated.id < olderCreated.id).toBe(true)
+    expect(memory.query({ ticketId: 'reader', text: 'alpha' }).map(entry => entry.id))
+      .toEqual([newerCreated.id, olderCreated.id])
+    store.close()
+  })
+
+  it('tie-breaks equal scores by recency and then id descending', () => {
+    const store = new Store(tempHome())
+    let tick = 0
+    const memory = new SpillBackedLongTermMemory(store, {
+      now: () => new Date(Date.UTC(2026, 0, 1) + tick++ * 1_000),
+    })
+    const older = memory.put('ticket_a', 'alpha')
+    const newer = memory.put('ticket_b', 'alpha')
+    expect(memory.query({ ticketId: 'reader', text: 'alpha' }).map(entry => entry.id))
+      .toEqual([newer.id, older.id])
+    store.close()
+
+    const fixedStore = new Store(tempHome())
+    const fixed = () => new Date('2026-01-01T00:00:00.000Z')
+    const sameClock = new SpillBackedLongTermMemory(fixedStore, { now: fixed })
+    const first = sameClock.put('ticket_a', 'alpha')
+    const second = sameClock.put('ticket_b', 'alpha')
+    expect(second.createdAt).toBe(first.createdAt)
+    expect(sameClock.query({ ticketId: 'reader', text: 'alpha' }).map(entry => entry.id))
+      .toEqual([second.id, first.id])
+    fixedStore.close()
+  })
+
+  it('dedupes normalized text per ticket without a new entry or spill', () => {
+    const store = new Store(tempHome())
+    const memory = new SpillBackedLongTermMemory(store)
+    const first = memory.put('ticket_a', 'Auth   FAILED\n on token', { tags: ['seen'] })
+    const spillSpy = vi.spyOn(store, 'putSpill')
+    const second = memory.put('ticket_a', '  auth failed on TOKEN  ', { tags: ['prod'] })
+
+    expect(second.id).toBe(first.id)
+    expect(second.spillId).toBe(first.spillId)
+    expect(second.createdAt).toBe(first.createdAt)
+    expect(second.tags).toEqual(['seen', 'prod'])
+    expect(store.getDoc('ltm', first.id)).toEqual(second)
+    expect(store.listDocs('ltm')).toHaveLength(1)
+    expect(spillSpy).not.toHaveBeenCalled()
+    spillSpy.mockRestore()
+    expect(store.getSpill(first.spillId)).toBe('Auth   FAILED\n on token')
+
+    // Different text is still a new entry, and the same text for another
+    // ticket is not deduped.
+    const different = memory.put('ticket_a', 'a different note')
+    expect(different.id).not.toBe(first.id)
+    const otherTicket = memory.put('ticket_b', 'auth failed on token')
+    expect(otherTicket.id).not.toBe(first.id)
+    expect(store.listDocs('ltm')).toHaveLength(3)
+    store.close()
+  })
+
+  it('never reuses a zombie entry whose spill is missing', () => {
+    const store = new Store(tempHome())
+    const memory = new SpillBackedLongTermMemory(store)
+    const first = memory.put('ticket_a', 'auth failed on token')
+    store.deleteSpill(first.spillId)
+
+    const second = memory.put('ticket_a', 'auth failed on token')
+    expect(second.id).not.toBe(first.id)
+    expect(second.spillId).not.toBe(first.spillId)
+    expect(store.getSpill(second.spillId)).toBe('auth failed on token')
+    expect(readSpillFor(store, second.spillId, { ticketId: 'ticket_a' }).text)
+      .toBe('auth failed on token')
+    // The summary-only zombie is not recallable; the fresh entry is.
+    expect(memory.query({ ticketId: 'reader', text: 'auth' }).map(entry => entry.id))
+      .toEqual([second.id])
+    store.close()
+  })
+
+  it('keeps requested tags as an AND filter while tag hits drive ranking', () => {
+    const store = new Store(tempHome())
+    let tick = 0
+    const memory = new SpillBackedLongTermMemory(store, {
+      now: () => new Date(Date.UTC(2026, 0, 1) + tick++ * 1_000),
+    })
+    const both = memory.put('ticket_a', 'common failure text', { tags: ['auth', 'prod'] })
+    const one = memory.put('ticket_b', 'common failure text', { tags: ['auth'] })
+    memory.put('ticket_c', 'common failure text')
+
+    expect(memory.query({ ticketId: 'reader', text: 'common', tags: ['auth', 'prod'] })
+      .map(entry => entry.id)).toEqual([both.id])
+    expect(memory.query({ ticketId: 'reader', text: 'common', tags: ['auth'] })
+      .map(entry => entry.id).sort()).toEqual([both.id, one.id].sort())
+    store.close()
+  })
+
+  it('normalizes case, punctuation, stop words, and synonyms', () => {
+    const store = new Store(tempHome())
+    const memory = new SpillBackedLongTermMemory(store)
+    const saved = memory.put('ticket_a', 'The DEPLOY token was rotated after the incident.', {
+      tags: ['deploy'],
+    })
+
+    expect(memory.query({ ticketId: 'ticket_b', text: 'who rotated the deploy credential?' })
+      .map(entry => entry.id)).toEqual([saved.id])
+    expect(memory.query({ ticketId: 'ticket_b', text: 'deploy-token' })
+      .map(entry => entry.id)).toEqual([saved.id])
+    // NFKC + normalization must not turn an unrelated query into a hit.
+    expect(memory.query({ ticketId: 'ticket_b', text: 'ＫＵＢＥＲＮＥＴＥＳ helm chart' }))
+      .toEqual([])
+    store.close()
+  })
+
+  it('retrieves tag-only queries and expands exactly one hop over shared tags', () => {
+    const store = new Store(tempHome())
+    const memory = new SpillBackedLongTermMemory(store)
+    const owner = memory.put('ticket_owner', 'platform team owns deploy pipeline', {
+      tags: ['deploy', 'ownership'],
+    })
+    const token = memory.put('ticket_token', 'deploy token rotated', {
+      tags: ['deploy', 'security'],
+    })
+    // Shares `security` with token, but token is only an expansion candidate;
+    // a second hop must never reach this entry.
+    const far = memory.put('ticket_far', 'unrelated note', { tags: ['security'] })
+
+    expect(() => readSpillFor(store, token.spillId, { ticketId: 'reader' })).toThrow()
+    const hits = memory.query({ ticketId: 'reader', text: 'ownership' })
+    expect(hits.map(entry => entry.id)).toEqual([owner.id, token.id])
+
+    // Every ranked hit, including the expanded one, grants the reader ticket.
+    expect(readSpillFor(store, owner.spillId, { ticketId: 'reader' }).text)
+      .toBe('platform team owns deploy pipeline')
+    expect(readSpillFor(store, token.spillId, { ticketId: 'reader' }).text)
+      .toBe('deploy token rotated')
+    expect(() => readSpillFor(store, far.spillId, { ticketId: 'reader' })).toThrow()
+    store.close()
+  })
+
+  it('keeps requested tags as an exact AND filter while query words match tags', () => {
+    const store = new Store(tempHome())
+    const memory = new SpillBackedLongTermMemory(store)
+    const upper = memory.put('ticket_a', 'common body', { tags: ['Auth', 'prod'] })
+    const lower = memory.put('ticket_b', 'common body', { tags: ['auth'] })
+
+    expect(memory.query({ ticketId: 'reader', text: 'auth', tags: ['auth'] })
+      .map(entry => entry.id)).toEqual([lower.id])
+    expect(memory.query({ ticketId: 'reader', text: 'auth', tags: ['Auth'] })
+      .map(entry => entry.id)).toEqual([upper.id])
+    store.close()
+  })
+
+  it('redacts caller-supplied text before writing the spill and summary', () => {
+    const store = new Store(tempHome())
+    const memory = new SpillBackedLongTermMemory(store, text => text.replace('s3cret', '[redacted]'))
+    const saved = memory.put('ticket_a', 'token=s3cret')
+    expect(store.getSpill(saved.spillId)).toBe('token=[redacted]')
+    expect(saved.text).toBe('token=[redacted]')
+    store.close()
+  })
+
+  it('prunes the oldest entries and their spills by count', () => {
+    const store = new Store(tempHome())
+    let tick = 0
+    const memory = new SpillBackedLongTermMemory(store, {
+      maxEntries: 2,
+      now: () => new Date(Date.UTC(2026, 0, 1) + tick++ * 1_000),
+    })
+    const first = memory.put('ticket_a', 'oldest body')
+    const second = memory.put('ticket_a', 'middle body')
+    const third = memory.put('ticket_a', 'newest body')
+
+    expect(store.getDoc('ltm', first.id)).toBeUndefined()
+    expect(store.getSpill(first.spillId)).toBeUndefined()
+    expect(store.spillGrants(first.spillId)).toEqual([])
+    expect(() => readSpillFor(store, first.spillId, { ticketId: 'ticket_a' })).toThrow()
+    expect(memory.recent().map(entry => entry.id)).toEqual([third.id, second.id])
+    store.close()
+  })
+
+  it('prunes entries older than the age limit and keeps recent ones', () => {
+    const store = new Store(tempHome())
+    let clock = new Date('2026-01-01T00:00:00.000Z')
+    const memory = new SpillBackedLongTermMemory(store, text => text, {
+      maxAgeDays: 30,
+      now: () => clock,
+    })
+    const stale = memory.put('ticket_a', 'stale body')
+    clock = new Date('2026-02-15T00:00:00.000Z')
+    const fresh = memory.put('ticket_a', 'fresh body')
+
+    expect(store.getDoc('ltm', stale.id)).toBeUndefined()
+    expect(store.getSpill(stale.spillId)).toBeUndefined()
+    expect(store.getDoc('ltm', fresh.id)).toEqual(fresh)
+    expect(memory.recent().map(entry => entry.id)).toEqual([fresh.id])
+    store.close()
+  })
+
+  it('never prunes the entry just upserted by remember', () => {
+    const store = new Store(tempHome())
+    let clock = new Date('2026-01-01T00:00:00.000Z')
+    const memory = new SpillBackedLongTermMemory(store, text => text, {
+      maxEntries: 1,
+      maxAgeDays: 30,
+      now: () => clock,
+    })
+    const ticket = ticketFixture('ticket_old')
+    const first = memory.remember(ticket)
+    clock = new Date('2026-03-20T00:00:00.000Z')
+    const second = memory.remember({ ...ticket, title: 'updated issue' })
+
+    expect(second.id).toBe(first.id)
+    expect(second.createdAt).toBe(first.createdAt)
+    expect(store.getDoc('ltm', first.id)).toEqual(second)
+    expect(store.getSpill(first.spillId)).toContain('updated issue')
+    expect(memory.recent()).toHaveLength(1)
+    store.close()
+  })
+
+  it('forget removes the document, its spill, and every grant', () => {
+    const store = new Store(tempHome())
+    const memory = new SpillBackedLongTermMemory(store)
+    const saved = memory.put('ticket_a', 'forget me')
+    expect(store.spillGrants(saved.spillId).length).toBeGreaterThan(0)
+
+    expect(memory.forget(saved.id)).toBe(true)
+    expect(store.getDoc('ltm', saved.id)).toBeUndefined()
+    expect(store.getSpill(saved.spillId)).toBeUndefined()
+    expect(store.spillGrants(saved.spillId)).toEqual([])
+    expect(() => readSpillFor(store, saved.spillId, { ticketId: 'ticket_a' })).toThrow()
+    expect(memory.forget(saved.id)).toBe(false)
+    store.close()
+  })
+
+  it('parses retention env with conservative defaults and 0 as disabled', () => {
+    const defaults = {
+      maxEntries: 1000,
+      maxAgeDays: 90,
+      coldMaxEntries: 200,
+      coldMaxAgeDays: 3650,
+    }
+    expect(memoryRetentionFromEnv({})).toEqual(defaults)
+    expect(memoryRetentionFromEnv({
+      DS_AGENT_MEMORY_MAX_ENTRIES: '',
+      DS_AGENT_MEMORY_MAX_AGE_DAYS: '  ',
+    })).toEqual(defaults)
+    expect(memoryRetentionFromEnv({
+      DS_AGENT_MEMORY_MAX_ENTRIES: 'not-a-number',
+      DS_AGENT_MEMORY_MAX_AGE_DAYS: '-3',
+    })).toEqual(defaults)
+    expect(memoryRetentionFromEnv({ DS_AGENT_MEMORY_MAX_ENTRIES: '1.5' }))
+      .toEqual(defaults)
+    expect(memoryRetentionFromEnv({
+      DS_AGENT_MEMORY_MAX_ENTRIES: '0',
+      DS_AGENT_MEMORY_MAX_AGE_DAYS: '0',
+      DS_AGENT_MEMORY_COLD_MAX_ENTRIES: '0',
+      DS_AGENT_MEMORY_COLD_MAX_AGE_DAYS: '0',
+    })).toEqual({ maxEntries: 0, maxAgeDays: 0, coldMaxEntries: 0, coldMaxAgeDays: 0 })
+    expect(memoryRetentionFromEnv({}, { maxEntries: 7 }))
+      .toEqual({ ...defaults, maxEntries: 7 })
+  })
+})
+
+function ticketFixture(id: string): Ticket {
+  return {
+    id,
+    title: 'older issue',
+    brief: 'durable memory ticket',
+    mandate: {
+      strength: 'explicit',
+      policyVersion: 'policy-v1',
+      scope: 'durable memory ticket',
+      actor: { source: 'github', id: 'LofiSu' },
+      basis: 'addressed',
+    },
+    threadKeys: ['github:issue:7'],
+    channels: [{ source: 'github', thread: 'issue:7', address: { provider: 'github', repo: 'LofiSu/x', issue: '7' } }],
+    inputs: [],
+    assignments: [{
+      id: 'asg_1',
+      state: 'ended',
+      speculative: false,
+      report: { kind: 'report', text: 'finished the work' },
+    }],
+    speculative: false,
+    originTriggerId: 'gh_issue_7_body',
+    createdAt: '2026-01-01T00:00:00.000Z',
+  }
+}

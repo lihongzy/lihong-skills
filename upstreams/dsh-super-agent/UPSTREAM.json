@@ -1,0 +1,8 @@
+{
+  "name": "dsh-super-agent",
+  "repository": "https://github.com/LofiSu/dsh-super-agent.git",
+  "branch": "main",
+  "tracked_commit": "ca9823e5c096ea6ff4552b73b2d417cefaea88b9",
+  "last_synced_at": "2026-11-20T00:36:00Z",
+  "description": "Upstream snapshot of LofiSu/dsh-super-agent used as reference template for autonomous multi-agent engineering workflows."
+}
