@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "mode": "paused",
+  "stop_requested": false,
+  "current_cycle": 0,
+  "cycles_this_session": 0,
+  "max_cycles_per_session": 4,
+  "max_idle_minutes": 20,
+  "next_action": "plan",
+  "queue": {
+    "ready": 0,
+    "in_progress": 0,
+    "blocked": 0
+  },
+  "active_agents": [],
+  "open_prs": [],
+  "last_progress_at": null,
+  "updated_at": null
+}
