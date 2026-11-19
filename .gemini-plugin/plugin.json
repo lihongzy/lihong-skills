@@ -1,0 +1,10 @@
+{
+  "name": "lihong-skills",
+  "version": "0.1.0",
+  "description": "Personal library of agent skills for engineering and productivity (Google Antigravity, Claude Code, Codex)",
+  "author": {
+    "name": "lihongzy"
+  },
+  "repository": "https://github.com/lihongzy/lihong-skills.git",
+  "license": "MIT"
+}
