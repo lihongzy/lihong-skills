@@ -1,0 +1,10 @@
+{
+  "name": "lihong-skills",
+  "version": "0.1.0",
+  "description": "Personal library of agent skills for engineering and productivity",
+  "author": {
+    "name": "lihongzy"
+  },
+  "skills": "./skills",
+  "license": "MIT"
+}

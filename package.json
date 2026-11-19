@@ -1,0 +1,13 @@
+{
+  "name": "lihong-skills",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Personal library of agent skills for engineering and productivity",
+  "type": "module",
+  "scripts": {
+    "check-frontmatter": "node scripts/check-frontmatter.mjs"
+  },
+  "devDependencies": {
+    "yaml": "^2.7.0"
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "name": "lihong-skills",
+  "owner": "lihongzy",
+  "description": "Personal library of agent skills for engineering and productivity",
+  "plugins": [
+    {
+      "name": "lihong-skills",
+      "source": "./",
+      "description": "Composable personal skills for software engineering and workflow automation"
+    }
+  ]
+}
